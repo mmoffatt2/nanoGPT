@@ -38,6 +38,7 @@ Hardware Related
   * [Perform Inference From Custom Model](#perform-inference-from-custom-model)
 * [Explorations](#explorations)
   * [Start Exploration](#start-exploration)
+  * [Inspect and Monitor Best Val Losses](#inspect-and-monitor-best-val-losses)
   * [Start Tensorboard Logging](#start-tensorboard-logging)
   * [Troubleshooting](#troubleshooting)
   * [Creating New Features and Exploration Scripts](#creating-new-features-and-exploration-scripts)
@@ -157,11 +158,36 @@ logs/
 
 and save checkpoints for inference in `out_test`
 
+### Inspect and Monitor Best Val Losses
+
+Often for large explorations with `run_experiments` one wants to monitor the
+the best validation losses so far (a metric for how well the model does on next
+token prediction on the current dataset).
+
+The included `inspect_ckpts.py` script reports the best valiation loss and
+associated iteration number for all ckpt.pt files recursivel for a specified
+parent directory.
+
+Example usage:
+```bash
+python3 inspect_ckpts.py --directory ./out --sort loss
+```
+
+![image](./images/inspect_ckpts.png)
+
+This can be wrapped with color via the watch command for a realtime dashboard.
+
+For example to look at all checkpoint files in the out directory:
+```bash
+watch --color 'python3 inspect_ckpts.py --directory ./out --sort loss'
+```
+
+As with remainder of the repo, this script is provided as a base to open up for
+additional community contributions.
 
 ### Start Tensorboard Logging
 
-If using tensorboard for logging (recommended as this is the means tested by the
-development team), we have provided a convenience script:
+If using tensorboard for logging, we have provided a convenience script:
 
 ```bash
 bash start_tensorboard.sh
