@@ -10,15 +10,17 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import math
 import inspect
 import sys
-from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
+# Config
+from gpt_conf import GPTConfig
+
 # Variations
-from variations.softmax_variations import Softermax, Constantmax, Constantmax_quan, Strongermax, Polymax, SigSoftmax, ExpPolymax, SaturatingConSmax
-from variations.normalization_variations import LayerNorm, RMSNorm
+from variations.softmax_variations import softmax_dictionary, Softermax, ConSmax, ConSmaxQuan, Strongermax, Polymax, SigSoftmax, ExpPolymax, SaturatingConSmax
+from variations.norm_variations import norm_dictionary, LayerNorm, RMSNorm, pRMSNorm, kRMSNorm
 from variations.position_encoding_variations import RotaryEmbedding, ShortRope, SymmetricalOverlapAngularPositions, FIRE
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
@@ -137,30 +139,8 @@ class CausalSelfAttention(nn.Module):
         else:
             # Remove flash attention (only compatible with 'softmax')
             self.flash = False
-
-            if self.softmax_variant_attn == "softermax":
-              self.softmax_layer = Softermax(config)
-
-            if self.softmax_variant_attn == "constantmax":
-              self.softmax_layer = Constantmax(config)
-
-            if self.softmax_variant_attn == "constantmax_quan":
-                self.softmax_layer = Constantmax_quan(config)
-
-            if self.softmax_variant_attn == "strongermax":
-              self.softmax_layer = Strongermax(config)
-
-            if self.softmax_variant_attn == "polymax":
-              self.softmax_layer = Polymax(config)
-
-            if self.softmax_variant_attn == "sigsoftmax":
-              self.softmax_layer = SigSoftmax(config)
-
-            if self.softmax_variant_attn == "saturatingconsmax":
-              self.softmax_layer = SaturatingConSmax(config)
-
-            if self.softmax_variant_attn == "exppolymax":
-              self.softmax_layer = ExpPolymax(config)
+            # Set softmax_layer_attn to custom softmax alternative
+            self.softmax_layer_attn = softmax_dictionary[config.softmax_variant_attn](config)
 
         if self.window_size is not None:
             # TODO: look into supporting sliding window attn for flash attn
@@ -245,7 +225,7 @@ class CausalSelfAttention(nn.Module):
 
             # softmax variation
             if self.softmax_variant_attn != 'softmax':
-                att = self.softmax_layer(att)
+                att = self.softmax_layer_attn(att)
             else:
                 att = F.softmax(att, dim=-1)
 
@@ -289,15 +269,11 @@ class Block(nn.Module):
     def __init__(self, config, mlp=None, attn=None):
         super().__init__()
 
-        if config.layernorm_variant == 'rmsnorm':
-            self.ln_1 = RMSNorm(config.n_embd)
-            if not config.use_parallel_mlp:
-                self.ln_2 = RMSNorm(config.n_embd)
-
-        if config.layernorm_variant == 'layernorm':
-            self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-            if not config.use_parallel_mlp:
-                self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+        # Initialize and set attn normalization (e.g. rmsnorm)
+        norm_variant_attn = norm_dictionary[config.norm_variant_attn]
+        self.ln_1 = norm_variant_attn(config)
+        if not config.use_parallel_mlp:
+            self.ln_2 = norm_variant_attn(config)
 
         self.use_post_ln = config.use_post_ln
         self.use_parallel_mlp = config.use_parallel_mlp
@@ -330,83 +306,6 @@ class Block(nn.Module):
                 x = x + self.mlp(self.ln_2(x))
         return x
 
-@dataclass
-class GPTConfig:
-    block_size: int = 1024
-    vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
-    n_layer: int = 12
-    n_head: int = 12
-    n_kv_group: int = 12
-    n_embd: int = 768
-    dropout: float = 0.0
-    window_size: int = 128
-    gate: bool = False
-
-    use_parallel_mlp: bool = False
-
-    # Shared parameters
-    # MLP
-    shared_mlp_size: int = 1
-    shared_mlp_sym: bool = False
-    # ATTN
-    shared_attn_size: int = 1
-    shared_attn_sym: bool = False
-
-    # Softmax Alternatives and Options
-    softmax_variant_attn: str = "softmax" # Choices: "softmax" "softermax" "sigsoftmax" "polymax" "strongermax" "constantmax"
-    softmax_variant_output: str = "softmax" # Choices: "softmax" "softermax" "sigsoftmax" "polymax" "strongermax" "constantmax"
-
-    ## Constantmax Options
-    constantmax_initial_beta: float = 0.0 # denominator to utilize for Constantmax
-    constantmax_initial_gamma: float = 1.0 # denominator to utilize for Constantmax
-    constantmax_use_euler_base: bool = True # use 'e' as base for Constantmax
-    constantmax_base: float = 2.0 # denominator to utilize for Constantmax
-
-    ## Softermax options
-    softermax_use_xmax: bool = True # Softermax Option active is softermax selected - True: uses (x - x_max) normalization; False: removes normalization (potential overflow)
-
-    ## Polymax options
-    polymax_x_intercept: float = -100.0
-    polymax_y_intercept: float = 1.0
-    polymax_power: float = 2.0
-    polymax_divisor: float = 1000.0
-
-    ## SigSoftmaxBase
-    sigsoftmax_use_euler_base: bool = True # use 'e' as base for Constantmax
-    sigsoftmax_base: float = 2.0 # denominator to utilize for Constantmax
-
-    ## Strongermax options
-    strongermax_strength: float = 2.0 # Softermax with option of 'stronger' (larger integer) bases
-    strongermax_sum_to_1: bool = False # Softermax with option of 'stronger' (larger integer) bases
-    strongermax_divisor: float = 1.0 # Softermax with option of 'stronger' (larger integer) bases
-    strongermax_use_xmax: bool = True # Softermax with option of 'stronger' (larger integer) bases
-
-    ## ExpPolymax options
-    exppolymax_base: float = 2.719
-    exppolymax_y_intercept: float = 1.0
-    exppolymax_power: float = 2.0
-    exppolymax_divisor: float = 1.0
-
-    # Positional Embeddings Variations
-    use_abs_pos_embeddings: bool = True # Note: one can use this AND rotary embeddings
-    use_fire_embeddings: bool = False
-    shared_fire_embeddings: bool = False
-    use_rotary_embeddings: bool = False
-    rope_variant: str = "rope" # options: "shortrope", "rope"
-    shortrope_length: int = 8 # number of embeddings to use in shortrope
-
-    # Structuring Options, remember to compile the model
-    use_post_ln: bool = True
-
-    # Layernorm Alternatives and Options
-    layernorm_variant: str = "rmsnorm"
-    bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-
-    # Activation Alternatives
-    activation_variant: str = "gelu"
-
-    # Linear Alternatives
-    linear_variant: str = "linear"
 
 class GPT(nn.Module):
 
@@ -417,10 +316,8 @@ class GPT(nn.Module):
 
         self.config = config
 
-        if config.layernorm_variant == "layernorm":
-            self.normalization_variant = LayerNorm(config.n_embd, bias=config.bias)
-        if config.layernorm_variant == "rmsnorm":
-            self.normalization_variant = RMSNorm(config.n_embd)
+        # Initialize and set ouptut normalization (e.g. rmsnorm)
+        self.norm_variant_output = norm_dictionary[config.norm_variant_output](config)
 
         # Shared Parameters MLP
         shared_mlp_array = create_shared_param_group("mlp", config)
@@ -432,29 +329,13 @@ class GPT(nn.Module):
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config, mlp=shared_mlp_array[i], attn=shared_attn_array[i]) for i in range(config.n_layer)]),
-            ln_f = self.normalization_variant,
+            ln_f = self.norm_variant_output,
         ))
 
         # Select softmax variant for output layer
         self.softmax_variant_output = config.softmax_variant_output
         if self.softmax_variant_output != "softmax":
-            if self.softmax_variant_output == "softermax":
-                self.softmax_layer_output = Softermax(config)
-
-            if self.softmax_variant_output == "constantmax":
-                self.softmax_layer_output = Constantmax(config)
-
-            if self.softmax_variant_output == "constantmax_quan":
-                self.softmax_layer_output = Constantmax_quan(config)
-
-            if self.softmax_variant_output == "strongermax":
-              self.softmax_layer_output = Strongermax(config)
-
-            if self.softmax_variant_output == "polymax":
-              self.softmax_layer_output = Polymax(config)
-
-            if self.softmax_variant_output == "sigsoftmax":
-              self.softmax_layer_output = SigSoftmax(config)
+            self.softmax_layer_output = softmax_dictionary[config.softmax_variant_output](config)
 
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
