@@ -20,6 +20,7 @@ from torch.distributed import init_process_group, destroy_process_group
 from torch.utils.tensorboard import SummaryWriter
 
 from model import GPTConfig, GPT
+from quantization.quantize import quantizer
 
 
 def parse_args():
@@ -357,6 +358,8 @@ class Trainer:
             self.load_data()
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
+            quantizer(self.model, quantize_attention=True)
+            print(self.model)
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number
         elif self.args.init_from == 'resume':
