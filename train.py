@@ -21,6 +21,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from model import GPTConfig, GPT
 from quantization.quantize import quantizer
+from quantization.binarize import binarizer
 
 
 def parse_args():
@@ -78,7 +79,7 @@ def parse_args():
     model_group.add_argument('--bias', default=False, action=argparse.BooleanOptionalAction, help="only used for layernorm variation option")
     model_group.add_argument("--prmsnorm_pct", default=0.0625, type=float, help="percentage (1 being 100 percent) of first entries used for partial rms" )
     model_group.add_argument("--krmsnorm_num", default=10, type=int, help="max number of first entries for partial rms" )
-
+    model_group.add_argument("--quantization_choice", type=str, default="none", choices=["none", "quantize", "binarize"], help="quantization choice for model")
     # ACTIVATION VARIATIONS
     model_group.add_argument(
         "--activation_variant",
@@ -358,7 +359,10 @@ class Trainer:
             self.load_data()
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
-            quantizer(self.model, quantize_attention=True)
+            if self.args.quantization_choice == 'quantize':
+                quantizer(self.model, quantize_attention=True)
+            if self.args.quantization_choice == 'binarize':
+                binarizer(self.model, 'basic', False, False, False)
             print(self.model)
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number

@@ -165,7 +165,7 @@ class IRLinear(nn.Module):
         return self.__class__.__name__ + " (" + str(self.in_features) + " -> " + str(self.out_features) + ")"
     
 
-def binarizer(model, binarize_layer='basic', skip_final=False, qk_only=False, qv_only=False, kv_only=False):
+def binarizer(model, binarize_layer='basic', qk_only=False, qv_only=False, kv_only=False):
     """
     Recursively replace linear layers with binary layers
     ---------
@@ -182,13 +182,11 @@ def binarizer(model, binarize_layer='basic', skip_final=False, qk_only=False, qv
         for sub_name, sub_layer in getattr(block, "mlp").named_children():
             if type(sub_layer) == nn.Linear:
             # Binarization
-                if (skip_final == True) & (sub_layer.out_features == 4):
+                if (kv_only == True) & (sub_name == 'c_attn_q'):
                     continue
-                if (kv_only == True) & (sub_name == '0'):
+                if (qv_only == True) & (sub_name == 'c_attn_k'):
                     continue
-                if (qv_only == True) & (sub_name == '1'):
-                    continue
-                if (qk_only == True) & (sub_name == '2'):
+                if (qk_only == True) & (sub_name == 'c_attn_v'):
                     continue
                     
                 if binarize_layer == 'basic':
@@ -198,13 +196,11 @@ def binarizer(model, binarize_layer='basic', skip_final=False, qk_only=False, qv
                 model.__dict__["_modules"]["transformer"]["h"][i].mlp[sub_name] = b
         for sub_name, sub_layer in getattr(block, "attn").named_children():
             if type(sub_layer) == nn.Linear:
-                if (skip_final == True) & (sub_layer.out_features == 4):
+                if (kv_only == True) & (sub_name == 'c_attn_q'):
                     continue
-                if (kv_only == True) & (sub_name == '0'):
+                if (qv_only == True) & (sub_name == 'c_attn_k'):
                     continue
-                if (qv_only == True) & (sub_name == '1'):
-                    continue
-                if (qk_only == True) & (sub_name == '2'):
+                if (qk_only == True) & (sub_name == 'c_attn_v'):
                     continue
                 if binarize_layer == 'basic':
                     b = BinarizedLinear(sub_layer.in_features, sub_layer.out_features)
