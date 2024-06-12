@@ -81,7 +81,7 @@ def parse_args():
     model_group.add_argument("--krmsnorm_num", default=10, type=int, help="max number of first entries for partial rms" )
     model_group.add_argument("--quantization_choice", type=str, default="none", choices=["none", "quantize", "binarize"], help="quantization choice for model")
     model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
-    model_group.add_argument("--quantize_attention", type=bool, default=True, help="Whether the linear layers in attention are quantized")
+    model_group.add_argument("--quantize_attention", default=True, action=argparse.BooleanOptionalAction, help="Whether the linear layers in attention are quantized")
     # ACTIVATION VARIATIONS
     model_group.add_argument(
         "--activation_variant",
