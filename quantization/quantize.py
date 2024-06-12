@@ -168,7 +168,7 @@ class QuantizedLinear(nn.Linear):
             out = self.inference_quantized_forward(input)
         return out
     
-def quantizer(model, quantization_bits=7, quantize_attention=False):
+def quantizer(model, quantization_bits=8, quantize_attention=False):
     """
     Recursively replace linear layers with quantization layers
     :param model: Model to be quantized

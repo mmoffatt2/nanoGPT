@@ -80,6 +80,8 @@ def parse_args():
     model_group.add_argument("--prmsnorm_pct", default=0.0625, type=float, help="percentage (1 being 100 percent) of first entries used for partial rms" )
     model_group.add_argument("--krmsnorm_num", default=10, type=int, help="max number of first entries for partial rms" )
     model_group.add_argument("--quantization_choice", type=str, default="none", choices=["none", "quantize", "binarize"], help="quantization choice for model")
+    model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
+    model_group.add_argument("--quantize_attention", type=bool, default=True, help="Whether the linear layers in attention are quantized")
     # ACTIVATION VARIATIONS
     model_group.add_argument(
         "--activation_variant",
@@ -360,7 +362,7 @@ class Trainer:
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
             if self.args.quantization_choice == 'quantize':
-                quantizer(self.model, quantize_attention=True)
+                quantizer(self.model, quantization_bits=self.args.quantization_bits, quantize_attention=self.args.quantize_attention)
             if self.args.quantization_choice == 'binarize':
                 binarizer(self.model, 'basic', False, False, False)
             print(self.model)

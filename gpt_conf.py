@@ -12,6 +12,9 @@ class GPTConfig:
     window_size: int = 128
     gate: bool = False
     quantization_choice: str = "none" # Choices: "none" "quantize" "binarize" "irbinarize"
+    quantization_bits: int = 8
+    quantize_attention: bool = True
+
     # Training options
     ## Gradient Checkpointing - More memory efficient (can do long contexts), but is slower
     use_gradient_checkpointing: bool = False
