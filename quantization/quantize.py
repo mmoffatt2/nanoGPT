@@ -64,7 +64,10 @@ def dequantize(norm, sign_xi_array):
 
 
 class FakeLinearQuantizationFunction(torch.autograd.Function):
-    """Simulates error caused by quantization. Uses Straight-Through Estimator for Back prop"""
+    """Simulates error caused by quantization. Uses Straight-Through Estimator for Back prop
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
+    """
 
     @staticmethod
     def forward(ctx, input, bits=7):
@@ -94,17 +97,19 @@ _fake_quantize = FakeLinearQuantizationFunction.apply
 
 
 class QuantizedLinear(nn.Linear):
-    """Linear layer with quantization aware training capability"""
+    """Linear layer with quantization aware training capability
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
+    """
 
-    def __init__(self, *args, weight_bits=8, warmup_step=0, **kwargs):
-        # weight_bits: Number of bits for weight quantization
-        # warmup_step: Number of steps before starting quantization during training
-        super().__init__(*args, **kwargs)
-
-        if weight_bits < 1:
-            raise ValueError(f"weight_bits={weight_bits} must be higher than 0 ")
+    def __init__(self, weight_bits, in_features, out_features, warmup_step=0, **kwargs):
+        super().__init__(in_features, out_features, **kwargs)
 
         self.weight_bits = weight_bits
+
+        if self.weight_bits < 1:
+            raise ValueError(f"weight_bits={self.weight_bits} must be higher than 0 ")
+        
         self.warmup_step = warmup_step
         self.accumulation_bits = 32
 
@@ -142,7 +147,10 @@ class QuantizedLinear(nn.Linear):
             bias = self.bias_norm * self.quantized_bias
 
         # Uses the dequantized weights and bias to compute the output using F.linear
-        out = F.linear(input, weight, bias)
+        if self.bias:
+            out = F.linear(input, weight, bias)
+        else:
+            out = F.linear(input, weight)
 
         return out
 
@@ -167,30 +175,3 @@ class QuantizedLinear(nn.Linear):
             # Uses quantized weights and bias to compute the output
             out = self.inference_quantized_forward(input)
         return out
-    
-def quantizer(model, quantization_bits=8, quantize_attention=False):
-    """
-    Recursively replace linear layers with quantization layers
-    :param model: Model to be quantized
-    :param quantization_bits: Number of bits of quantization
-    :param quantize_attention: Quantize linear layers in SelfAttention
-    """
-
-    new_mlp_layers = []
-    new_attn_layers = []
-    for i, block in enumerate(model.transformer.h):
-        for sub_name, sub_layer in getattr(block, "mlp").named_children():
-            if type(sub_layer) == nn.Linear:
-                new_mlp_layers.append([i, sub_name, sub_layer.in_features, sub_layer.out_features])
-        if quantize_attention:
-            for sub_name, sub_layer in getattr(block, "attn").named_children():
-                if type(sub_layer) == nn.Linear:
-                    new_attn_layers.append([i, sub_name, sub_layer.in_features, sub_layer.out_features])
-    for block, sub_name, in_features, out_features in new_mlp_layers:
-        model.__dict__["_modules"]["transformer"]["h"][block].mlp[sub_name] = QuantizedLinear(
-            in_features, out_features, weight_bits=quantization_bits
-        )
-    for block, sub_name, in_features, out_features in new_attn_layers:
-        model.__dict__["_modules"]["transformer"]["h"][block].attn[sub_name] = QuantizedLinear(
-            in_features, out_features, weight_bits=quantization_bits
-        )

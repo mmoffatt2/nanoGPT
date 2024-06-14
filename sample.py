@@ -11,6 +11,7 @@ import seaborn as sns
 import torch
 import tiktoken
 from rich import print
+from collections import OrderedDict
 from torch.nn import functional as F
 
 from model import GPT, GPTConfig
@@ -20,6 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Inference from trained models")
     parser.add_argument("--device", type=str, required=True, help="Device to run inference (e.g., 'cpu', 'cuda', 'cuda:0', 'cuda:1')")
     parser.add_argument("--out_dir", type=str, required=True, help="Directory to load checkpoint from")
+    parser.add_argument("--quant_weights_file", type=str, default=None, help="File to export the quantized weights and scale factor")
     parser.add_argument("--init_from", type=str, default="resume", help="Either 'resume' (from an out_dir) or a GPT-2 variant (e.g., 'gpt2-xl')")
     parser.add_argument("--start", type=str, default="\n", help="Start text for generation. Can specify a file using 'FILE:prompt.txt'")
     parser.add_argument("--num_samples", type=int, default=3, help="Number of inference streams to draw")
@@ -87,6 +89,14 @@ def save_args(args, out_dir):
     with open(os.path.join(out_dir, 'args.json'), 'w') as f:
         json.dump(vars(args), f, indent=4)
 
+def save_quantized_weights(state_dict, out_file):
+    to_save = OrderedDict()
+    for k, v in list(state_dict.items()):
+        if k.endswith("quantized_bias") or k.endswith("bias_norm") or k.endswith("quantized_weight") or k.endswith("weight_norm"):
+            to_save[k] = v.cpu().numpy()
+
+    with open(f"{out_file}.pkl", 'wb') as f:
+        pickle.dump(to_save, f)
 
 def main():
     args = parse_args()
@@ -115,6 +125,10 @@ def main():
         for k, v in list(state_dict.items()):
             if k.startswith(unwanted_prefix):
                 state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+
+        if args.quant_weights_file:
+            save_quantized_weights(state_dict, args.quant_weights_file)
+
         model.load_state_dict(state_dict, strict=False)
     else:
         model = GPT.from_pretrained(args.init_from, dict(dropout=0.0))

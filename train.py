@@ -20,7 +20,6 @@ from torch.distributed import init_process_group, destroy_process_group
 from torch.utils.tensorboard import SummaryWriter
 
 from model import GPTConfig, GPT
-from quantization.quantize import quantizer
 from quantization.binarize import binarizer
 
 
@@ -361,8 +360,6 @@ class Trainer:
             self.load_data()
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
-            if self.args.quantization_choice == 'quantize':
-                quantizer(self.model, quantization_bits=self.args.quantization_bits, quantize_attention=self.args.quantize_attention)
             if self.args.quantization_choice == 'binarize':
                 binarizer(self.model, 'basic', False, False, False)
             print(self.model)
