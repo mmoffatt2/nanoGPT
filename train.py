@@ -20,7 +20,6 @@ from torch.distributed import init_process_group, destroy_process_group
 from torch.utils.tensorboard import SummaryWriter
 
 from model import GPTConfig, GPT
-from quantization.binarize import binarizer
 
 
 def parse_args():
@@ -360,9 +359,6 @@ class Trainer:
             self.load_data()
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
-            if self.args.quantization_choice == 'binarize':
-                binarizer(self.model, 'basic', False, False, False)
-            print(self.model)
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number
         elif self.args.init_from == 'resume':
