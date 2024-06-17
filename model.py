@@ -85,12 +85,6 @@ def create_shared_param_group(layer_type, config):
     return shared_group
 
 class CausalSelfAttention(nn.Module):
-    def __setitem__(self, key, value):
-        setattr(self, key, value)
-
-    def __getitem__(self, key):
-        return getattr(self, key)
-
     def __init__(self, config, fire_pos_enc=None):
         super().__init__()
         assert config.n_embd % config.n_head == 0
@@ -275,12 +269,6 @@ class CausalSelfAttention(nn.Module):
 
 
 class MLP(nn.Module):
-    def __setitem__(self, key, value):
-        setattr(self, key, value)
-
-    def __getitem__(self, key):
-        return getattr(self, key)
-
     def __init__(self, config):
         super().__init__()
 

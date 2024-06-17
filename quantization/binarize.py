@@ -50,6 +50,8 @@ class BinaryLinearFunction(Function):
 class BinarizedLinear(nn.Module):
     """
     Implements Binarization Layer using Binarization function
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
     """
 
     def __init__(self, in_features, out_features, bias=True):
@@ -136,6 +138,8 @@ class IRLinearFunction(Function):
 class IRLinear(nn.Module):
     """
     Implements Binarization Layer using Binarization function
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
     """
 
     def __init__(self, in_features, out_features, bias=True):
