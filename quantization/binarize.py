@@ -5,6 +5,7 @@ from torch.autograd import Function
 import pdb
 
 class BinaryLinearFunction(Function):
+    
     """
     Implements binarization function for linear layer with Straight-Through Estimation (STE)
     """
@@ -55,23 +56,25 @@ class BinarizedLinear(nn.Module):
         super(BinarizedLinear, self).__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.binarized_weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.register_buffer("b_weight", torch.Tensor(out_features, in_features))
 
         if bias:
-            self.bias = nn.Parameter(torch.Tensor(out_features))
+            self.binarization_bias = nn.Parameter(torch.Tensor(out_features))
         else:
             self.register_parameter("bias", None)
 
         self.reset_parameters()
 
     def reset_parameters(self):
-        self.weight.data.normal_(0, 1 * (math.sqrt(1.0 / self.in_features)))
-        if self.bias is not None:
-            self.bias.data.zero_()
+        self.binarized_weight.data.normal_(0, 1 * (math.sqrt(1.0 / self.in_features)))
+        if self.binarization_bias is not None:
+            self.binarization_bias.data.zero_()
 
     def forward(self, input):
-        if self.bias is not None:
-            return BinaryLinearFunction.apply(input, self.weight, self.bias)
+        if self.binarization_bias is not None:
+            self.b_weight = torch.sign(self.binarized_weight)
+            return BinaryLinearFunction.apply(input, self.binarized_weight, self.binarization_bias)
         else:
             raise Exception
 
