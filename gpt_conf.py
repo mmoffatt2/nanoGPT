@@ -11,7 +11,7 @@ class GPTConfig:
     dropout: float = 0.0
     window_size: int = 128
     gate: bool = False
-    quantization_choice: str = "none" # Choices: "none" "quantize" "binarize" "irbinarize"
+    quantization_choice: str = None # Choices: "None" "quantize" "binarize" "irbinarize"
     quantization_bits: int = 8
     quantize_attention: bool = True
 

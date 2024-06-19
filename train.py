@@ -75,9 +75,7 @@ def parse_args():
     model_group.add_argument('--bias', default=False, action=argparse.BooleanOptionalAction, help="only used for layernorm variation option")
     model_group.add_argument("--prmsnorm_pct", default=0.0625, type=float, help="percentage (1 being 100 percent) of first entries used for partial rms" )
     model_group.add_argument("--krmsnorm_num", default=10, type=int, help="max number of first entries for partial rms" )
-    model_group.add_argument("--quantization_choice", type=str, default="none", choices=["none", "quantize", "binarize"], help="quantization choice for model")
-    model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
-    model_group.add_argument("--quantize_attention", default=True, action=argparse.BooleanOptionalAction, help="Whether the linear layers in attention are quantized")
+
     # ACTIVATION VARIATIONS
     model_group.add_argument(
         "--activation_variant",
@@ -113,8 +111,18 @@ def parse_args():
             "bitlinear",
             "bitlinear_1p58",
             "bitlinear_optimized",
+            "quantized_linear"
         ],
     )
+    model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
+    model_group.add_argument("--quantize_attn_all", default=None, action=argparse.BooleanOptionalAction, help="Whether all linear layers in attention are quantized")
+    model_group.add_argument("--quantize_attn_q", default=None, action=argparse.BooleanOptionalAction, help="Whether the query linear layer is quantized")
+    model_group.add_argument("--quantize_attn_k", default=None, action=argparse.BooleanOptionalAction, help="Whether the key linear layer is quantized")
+    model_group.add_argument("--quantize_attn_v", default=None, action=argparse.BooleanOptionalAction, help="Whether the value linear layer is quantized")
+    model_group.add_argument("--quantize_attn_proj", default=None, action=argparse.BooleanOptionalAction, help="Whether the output projection in attention is quantized")
+    model_group.add_argument("--quantize_mlp_all", default=None, action=argparse.BooleanOptionalAction, help="Whether all MLP layers are quantized")
+    model_group.add_argument("--quantize_mlp_up", default=None, action=argparse.BooleanOptionalAction, help="Whether the mlp up layer is quantized")
+    model_group.add_argument("--quantize_mlp_down", default=None, action=argparse.BooleanOptionalAction, help="Whether the mlp down layer is quantized")
 
     # POSITIONAL EMBEDDING VARIATIONS
     model_group.add_argument('--use_rotary_embeddings', default=False, action=argparse.BooleanOptionalAction)

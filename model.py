@@ -88,11 +88,11 @@ class CausalSelfAttention(nn.Module):
     def __init__(self, config, fire_pos_enc=None):
         super().__init__()
         assert config.n_embd % config.n_head == 0
+
+        self.linear_variant = linear_dictionary[config.linear_variant]
         # key, query, value projections for all heads, but in a batch
-        if config.quantization_choice == 'quantize' and config.quantize_attention:
-            self.c_attn_q = QuantizedLinear(config.quantization_bits, config.n_embd, config.n_embd, bias=config.bias)
-        elif config.quantization_choice == 'binarize':
-            self.c_attn_q = BinarizedLinear(config.n_embd, config.n_embd, bias=True)
+        if config.quantization_choice != "linear" and (config.quantize_attn_q or config.quantize_attn_all):
+            self.c_attn_q = self.linear_variant(config.n_embd, config.n_embd, config=config)
         else:
             self.c_attn_q = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
 
@@ -104,19 +104,17 @@ class CausalSelfAttention(nn.Module):
             self.n_kv_group = config.n_kv_group
 
         self.kv_dim = (config.n_embd // config.n_head) * self.n_kv_group
-        if config.quantization_choice == 'quantize' and config.quantize_attention:
-            self.c_attn_k = QuantizedLinear(config.quantization_bits, config.n_embd, self.kv_dim, bias=config.bias)
-            self.c_attn_v = QuantizedLinear(config.quantization_bits, config.n_embd, self.kv_dim, bias=config.bias)
-            self.c_proj = QuantizedLinear(config.quantization_bits, config.n_embd, config.n_embd, bias=config.bias)
-        elif config.quantization_choice == 'binarize':
-            self.c_attn_k = BinarizedLinear(config.n_embd, self.kv_dim, bias=True)
-            self.c_attn_v = BinarizedLinear(config.n_embd, self.kv_dim, bias=True)
-            self.c_proj = BinarizedLinear(config.n_embd, config.n_embd, bias=True)
-        else:
-            self.c_attn_k = nn.Linear(config.n_embd, self.kv_dim, bias=config.bias)
-            self.c_attn_v = nn.Linear(config.n_embd, self.kv_dim, bias=config.bias)
-            # output projection
-            self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+
+        self.c_attn_k = nn.Linear(config.n_embd, self.kv_dim, bias=config.bias)
+        self.c_attn_v = nn.Linear(config.n_embd, self.kv_dim, bias=config.bias)
+        # output projection
+        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        if config.quantization_choice != "linear" and (config.quantize_attn_k or config.quantize_attn_all):
+            self.c_attn_k = self.linear_variant(config.n_embd, self.kv_dim, config=config)
+        if config.quantization_choice != "linear" and (config.quantize_attn_v or config.quantize_attn_all):
+            self.c_attn_v = self.linear_variant(config.n_embd, self.kv_dim, config=config)
+        if config.quantization_choice != "linear" and (config.quantize_attn_proj or config.quantize_attn_all):
+            self.c_proj = self.linear_variant(config.n_embd, config.n_embd, config=config)
 
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
@@ -274,11 +272,7 @@ class MLP(nn.Module):
 
         # Select linear variant
         self.linear_variant = linear_dictionary[config.linear_variant]
-        if config.quantization_choice == 'quantize':
-            self.linear_variant = QuantizedLinear
 
-        elif config.quantization_choice == 'binarize':
-            self.linear_variant = BinarizedLinear
         # Select activation variant
         self.activation_variant = activation_dictionary[config.activation_variant]
 
@@ -286,28 +280,21 @@ class MLP(nn.Module):
         self.use_swiglu = config.use_swiglu
 
         if self.use_swiglu:
-            if config.quantization_choice == 'quantize':
-                self.c_fc_in1 = self.linear_variant(config.quantization_bits, config.n_embd, 4 * config.n_embd, bias=config.bias)
-                self.c_fc_in2 = self.linear_variant(config.quantization_bits, config.n_embd, 4 * config.n_embd, bias=config.bias)
-                self.c_fc_out = self.linear_variant(config.quantization_bits, 4 * config.n_embd, config.n_embd, bias=config.bias)
-            elif config.quantization_choice == 'binarize':
-                self.c_fc_in1 = self.linear_variant(config.n_embd, 4 * config.n_embd, bias=True)
-                self.c_fc_in2 = self.linear_variant(config.n_embd, 4 * config.n_embd, bias=True)
-                self.c_fc_out = self.linear_variant(4 * config.n_embd, config.n_embd, bias=True)
-            else:
-                self.c_fc_in1 = self.linear_variant(config.n_embd, 4 * config.n_embd, bias=config.bias)
-                self.c_fc_in2 = self.linear_variant(config.n_embd, 4 * config.n_embd, bias=config.bias)
-                self.c_fc_out = self.linear_variant(4 * config.n_embd, config.n_embd, bias=config.bias)
+            self.c_fc_in1 = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+            self.c_fc_in2 = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+            self.c_fc_out = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+            if config.quantization_choice != "linear" and (config.quantize_mlp_up or config.quantize_mlp_all):
+                self.c_fc_in1 = self.linear_variant(config.n_embd, 4 * config.n_embd, config=config)
+                self.c_fc_in2 = self.linear_variant(config.n_embd, 4 * config.n_embd, config=config)
+            if config.quantization_choice != "linear" and (config.quantize_mlp_down or config.quantize_mlp_all):
+                self.c_fc_out = self.linear_variant(4 * config.n_embd, config.n_embd, config=config)
         else:
-            if config.quantization_choice == 'quantize':
-                self.c_fc = self.linear_variant(config.quantization_bits, config.n_embd, 4 * config.n_embd, bias=config.bias)
-                self.c_proj = self.linear_variant(config.quantization_bits, 4 * config.n_embd, config.n_embd, bias=config.bias)
-            elif config.quantization_choice == 'binarize':
-                self.c_fc = self.linear_variant(config.n_embd, 4 * config.n_embd, bias=True)
-                self.c_proj = self.linear_variant(4 * config.n_embd, config.n_embd, bias=True)
-            else:
-                self.c_fc = self.linear_variant(config.n_embd, 4 * config.n_embd, bias=config.bias)
-                self.c_proj = self.linear_variant(4 * config.n_embd, config.n_embd, bias=config.bias)
+            self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+            self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+            if config.quantization_choice != "linear" and (config.quantize_mlp_up or config.quantize_mlp_all):
+                self.c_fc = self.linear_variant(config.n_embd, 4 * config.n_embd, config=config)
+            if config.quantization_choice != "linear" and (config.quantize_mlp_down or config.quantize_mlp_all):
+                self.c_proj = self.linear_variant(4 * config.n_embd, config.n_embd, config=config)
 
         self.activation_variant = activation_dictionary[config.activation_variant]
         self.dropout = nn.Dropout(config.dropout)

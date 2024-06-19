@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+from torch.nn import functional as F
 import math
+
+from quantization.quantize import _fake_quantize, quantize
 
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
@@ -9,8 +12,8 @@ class BitLinear1p58(nn.Linear):
     Paper Link: https://arxiv.org/abs/2402.17764
     """
 
-    def __init__(self, in_features, out_features, bias=True, num_groups=1):
-        super().__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, config, num_groups=1):
+        super().__init__(in_features, out_features, config.bias)
 
         """
         RMSNorm is placed outside BitLinear
@@ -53,8 +56,8 @@ class BitLinear(nn.Linear):
     Source License: Apache Version 2.0
     """
 
-    def __init__(self, in_features, out_features, bias=True, num_groups=1):
-        super(BitLinear, self).__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, config, num_groups=1):
+        super(BitLinear, self).__init__(in_features, out_features, config.bias)
         self.num_groups = num_groups
         self.eps = 1e-5
 
@@ -124,8 +127,8 @@ class BitLinearOptimized(nn.Linear):
     Source License: Apache Version 2.0
     """
 
-    def __init__(self, in_features, out_features, bias=True, num_groups=1):
-        super(BitLinearOptimized, self).__init__(in_features, out_features, bias)
+    def __init__(self, in_features, out_features, config, num_groups=1):
+        super(BitLinearOptimized, self).__init__(in_features, out_features, config.bias)
         self.num_groups = num_groups
         self.eps = 1e-5
 
@@ -213,6 +216,86 @@ class BitLinearOptimized(nn.Linear):
         output = self.quantize_activations_groupwise(output)
 
         return output
+    
+class QuantizedLinear(nn.Linear):
+    """Linear layer with quantization aware training capability
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
+    """
+
+    def __init__(self, in_features, out_features, config, warmup_step=0):
+        super().__init__(in_features, out_features, config.bias)
+
+        self.weight_bits = config.quantization_bits
+
+        if self.weight_bits < 1:
+            raise ValueError(f"weight_bits={self.weight_bits} must be higher than 0 ")
+        
+        self.warmup_step = warmup_step
+        self.accumulation_bits = 32
+
+        # Placeholder for quantized weights during training
+        self._fake_quantized_weight = None
+        if config.bias == True:
+            self.register_buffer("quantized_bias", None)
+            self.register_buffer("bias_norm", None)
+
+        self.register_buffer("_step", torch.zeros(1))
+
+        self.register_buffer("quantized_weight", None)
+        self.register_buffer("weight_norm", None)
+
+    def training_quantized_forward(self, input):
+        """Fake quantizes weights. Function should only be used while training"""
+        assert self.training, "Should be called only during training"
+
+        # Applies the fake quantization to the weights
+        self._fake_quantized_weight = _fake_quantize(self.weight, self.weight_bits)
+        # Uses the quantized weights to compute the output using F.linear
+        out = F.linear(input, self._fake_quantized_weight, self.bias)
+
+        return out
+
+    def inference_quantized_forward(self, input):
+        """Simulate quantized inference. Function should be called only during inference"""
+        assert not self.training, "Should be called only during inference"
+
+        # Compute the dequantized weight
+        weight = self.weight_norm * self.quantized_weight
+
+        # Compute the dequantized bias
+        if self.bias is not None:
+            bias = self.bias_norm * self.quantized_bias
+
+        # Uses the dequantized weights and bias to compute the output using F.linear
+        if self.bias:
+            out = F.linear(input, weight, bias)
+        else:
+            out = F.linear(input, weight)
+
+        return out
+
+    def _eval(self):
+        """Sets the model for inference by quantizing the model"""
+        self.weight_norm, self.quantized_weight = quantize(self.weight, self.weight_bits)
+
+        if self.bias is not None:
+            self.bias_norm, self.quantized_bias = quantize(self.bias, self.accumulation_bits)
+
+    def forward(self, input):
+        """Passes the input through the model during training and inference"""
+        if self.training:
+            if self._step > self.warmup_step:
+                out = self.training_quantized_forward(input)
+            else:
+                out = super().forward(input)
+            self._step += 1
+        else:
+            # Prepares the model for inference by quantizing weights and bias
+            self._eval()
+            # Uses quantized weights and bias to compute the output
+            out = self.inference_quantized_forward(input)
+        return out
 
 
 linear_dictionary = {
@@ -220,4 +303,5 @@ linear_dictionary = {
     "bitlinear": BitLinear,
     "bitlinear_optimized": BitLinearOptimized,
     "bitlinear_1p58": BitLinear1p58,
+    "quantized_linear": QuantizedLinear,
 }
