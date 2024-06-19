@@ -29,9 +29,6 @@ from variations.position_encoding_variations import RotaryEmbedding, ShortRope, 
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
 
-from quantization.quantize import QuantizedLinear
-from quantization.binarize import BinarizedLinear
-
 def create_shared_param_group(layer_type, config):
     shared_size = None
     shared_sym = None # if true, output array is symmetrical
