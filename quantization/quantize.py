@@ -1,13 +1,30 @@
 import torch
 from torch import nn
 
-
-def quantize(tensor, bits):
+def affine_quantize(tensor, bits):
     """
     Quantization function
     :param tensor: Tensor to be quantized
     :param bits: Number of bits of quantization
-    :return: Quantized code
+    :return: zero point, scale, quantized tensor
+    """
+    bit_max = (1 << (bits - 1)) - 1
+    bit_min = -(1 << (bits - 1))
+    max = tensor.max()
+    min = tensor.min()
+    scale = (max - min) / (pow(2, bits) - 1)
+    zero_point = -torch.round(min * scale) - (pow(2, bits - 1))
+    xi_array = torch.round(tensor / scale) + zero_point
+    return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max)
+
+def stochastic_quantize(tensor, bits):
+    """
+    Quantization function
+    :param tensor: Tensor to be quantized
+    :param bits: Number of bits of quantization
+    :return: zero point, scale, quantized tensor
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
     """
 
     # Steps:
@@ -45,22 +62,17 @@ def quantize(tensor, bits):
     sign_xi_array = (sign_array * xi_array).to(dtype=torch.int8)
     norm = norm / s
 
-    return norm, sign_xi_array
+    return 0, norm, sign_xi_array
 
-
-def dequantize(norm, sign_xi_array):
+def dequantize(zero_point, scale, tensor):
     """
-    Dequantize the quantization code
-    :param norm: Norm of code
-    :param sign_xi_array: Rounded vector of code
+    Dequantize the quantizated tensor
+    :param zero_point: zero point of tensor
+    :param scale: scale of tensor
+    :param tensor: quantized tensor
     :return: Dequantized weights
     """
-
-    # weight ≈ (norm / s) * (tensor / norm * s)
-    weights = norm * sign_xi_array
-
-    return weights
-
+    return (tensor - zero_point) * scale
 
 class FakeLinearQuantizationFunction(torch.autograd.Function):
     """Simulates error caused by quantization. Uses Straight-Through Estimator for Back prop
@@ -69,7 +81,7 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input, bits=7):
+    def forward(ctx, input, bits=7, quantization_method="affine_quant"):
         """
         Forward pass
         :param ctx: Context object to store information for the backward pass (not used in this case)
@@ -81,8 +93,8 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
         # Quantize the input tensor using the quantize function.
         # Dequantize the quantized values using the dequantize function.
         # Return the dequantized tensor, which approximates the input tensor but includes the quantization error.
-        norm, quantized_weight = quantize(input, bits)
-        return dequantize(norm, quantized_weight)
+        zero_point, norm, quantized_weight = quantize_dictionary[quantization_method](input, bits)
+        return dequantize(zero_point, norm, quantized_weight)
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -91,5 +103,9 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
         # ignoring the quantization operation
         return grad_output, None, None
 
+quantize_dictionary = {
+    "affine_quant": affine_quantize,
+    "stochastic_quant": stochastic_quantize,
+}
 
 _fake_quantize = FakeLinearQuantizationFunction.apply

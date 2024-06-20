@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import math
 
-from quantization.quantize import _fake_quantize, quantize
+from quantization.quantize import _fake_quantize, quantize_dictionary
 
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
@@ -226,6 +226,7 @@ class QuantizedLinear(nn.Linear):
     def __init__(self, in_features, out_features, config, warmup_step=0):
         super().__init__(in_features, out_features, config.bias)
 
+        self.config = config
         self.weight_bits = config.quantization_bits
 
         if self.weight_bits < 1:
@@ -239,18 +240,20 @@ class QuantizedLinear(nn.Linear):
         if config.bias == True:
             self.register_buffer("quantized_bias", None)
             self.register_buffer("bias_norm", None)
+            self.register_buffer("bias_zero_point", torch.tensor([0]))
 
         self.register_buffer("_step", torch.zeros(1))
 
         self.register_buffer("quantized_weight", None)
         self.register_buffer("weight_norm", None)
+        self.register_buffer("weight_zero_point", torch.tensor([0]))
 
     def training_quantized_forward(self, input):
         """Fake quantizes weights. Function should only be used while training"""
         assert self.training, "Should be called only during training"
 
         # Applies the fake quantization to the weights
-        self._fake_quantized_weight = _fake_quantize(self.weight, self.weight_bits)
+        self._fake_quantized_weight = _fake_quantize(self.weight, self.weight_bits, self.config.quantization_method)
         # Uses the quantized weights to compute the output using F.linear
         out = F.linear(input, self._fake_quantized_weight, self.bias)
 
@@ -261,11 +264,11 @@ class QuantizedLinear(nn.Linear):
         assert not self.training, "Should be called only during inference"
 
         # Compute the dequantized weight
-        weight = self.weight_norm * self.quantized_weight
+        weight = (self.quantized_weight - self.weight_zero_point[0]) * self.weight_norm
 
         # Compute the dequantized bias
         if self.bias is not None:
-            bias = self.bias_norm * self.quantized_bias
+            bias = (self.quantized_bias - self.bias_zero_point[0]) * self.bias_norm
 
         # Uses the dequantized weights and bias to compute the output using F.linear
         if self.bias:
@@ -277,10 +280,10 @@ class QuantizedLinear(nn.Linear):
 
     def _eval(self):
         """Sets the model for inference by quantizing the model"""
-        self.weight_norm, self.quantized_weight = quantize(self.weight, self.weight_bits)
+        self.weight_zero_point[0], self.weight_norm, self.quantized_weight = quantize_dictionary[self.config.quantization_method](self.weight, self.weight_bits)
 
         if self.bias is not None:
-            self.bias_norm, self.quantized_bias = quantize(self.bias, self.accumulation_bits)
+            self.bias_zero_point[0], self.bias_norm, self.quantized_bias = quantize_dictionary[self.config.quantization_method](self.bias, self.accumulation_bits)
 
     def forward(self, input):
         """Passes the input through the model during training and inference"""

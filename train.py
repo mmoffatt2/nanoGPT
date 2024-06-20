@@ -115,6 +115,7 @@ def parse_args():
         ],
     )
     model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
+    model_group.add_argument("--quantization_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for quantization")
     model_group.add_argument("--quantize_attn_all", default=None, action=argparse.BooleanOptionalAction, help="Whether all linear layers in attention use linear variant")
     model_group.add_argument("--quantize_attn_q", default=None, action=argparse.BooleanOptionalAction, help="Whether the query linear layer uses linear variant")
     model_group.add_argument("--quantize_attn_k", default=None, action=argparse.BooleanOptionalAction, help="Whether the key linear layer uses linear variant")
