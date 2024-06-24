@@ -29,7 +29,7 @@ from variations.position_encoding_variations import RotaryEmbedding, ShortRope, 
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
 
-from quantization.quantize import QuantizedLinear
+from quantization.quantize import QuantizedLinear, quantize, _fake_quantize
 from quantization.binarize import BinarizedLinear
 
 def create_shared_param_group(layer_type, config):
@@ -132,6 +132,9 @@ class CausalSelfAttention(nn.Module):
         self.window_size = config.window_size
         self.n_embd = config.n_embd
         self.gate = config.gate
+        self.softmax_quantize = config.softmax_quantize
+        self.v_quantize = config.v_quantize
+        self.quantization_bits = config.quantization_bits
         self.use_fire_embeddings = None
         if config.use_fire_embeddings:
             self.use_fire_embeddings = config.use_fire_embeddings
@@ -186,6 +189,14 @@ class CausalSelfAttention(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
+        if self.softmax_quantize:
+            self.register_buffer("attention", torch.tensor(1.0))
+            self.register_buffer("softmax_quantized_norm", torch.tensor(1.0))
+            self.register_buffer("softmax_quantized_matrix", torch.tensor(0.0))
+        if self.v_quantize:
+            self.register_buffer("v", torch.tensor(1.0))
+            self.register_buffer("v_quantized_norm", torch.tensor(1.0))
+            self.register_buffer("v_quantized_matrix", torch.tensor(0.0))
 
 
     def forward(self, x):
@@ -222,6 +233,7 @@ class CausalSelfAttention(nn.Module):
                 q = q * gate_q
                 k = k * gate_kv
                 v = v * gate_kv
+
 
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, n_h, T, hs)
         k = k.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
@@ -262,11 +274,27 @@ class CausalSelfAttention(nn.Module):
                 att = F.softmax(att, dim=-1)
 
             att = self.attn_dropout(att)
+            self.attention = att
+            self.v = v
+            if self.training: 
+                if self.softmax_quantize:
+                    att = _fake_quantize(att, self.quantization_bits)
+                    self.attention = att
+                if self.v_quantize:
+                    v = _fake_quantize(v, self.quantization_bits)
+                    self.v = v
+            if not self.training:
+                self.softmax_quantized_norm, self.softmax_quantized_matrix = quantize(self.attention, self.quantization_bits)
+                self.v_quantized_norm, self.v_quantized_matrix = quantize(self.v, self.quantization_bits)
+                att = self.softmax_quantized_matrix * self.softmax_quantized_norm
+                v = self.v_quantized_matrix * self.v_quantized_norm
+
             if self.n_head != self.n_kv_group:
                 v_repeated = v.repeat_interleave(self.n_head // self.n_kv_group, dim=1)
                 y = att @ v_repeated # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
             else:
                 y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
+
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         # output projection
