@@ -9,13 +9,13 @@ def affine_quantize(tensor, bits):
     :return: zero point, scale, quantized tensor
     """
     bit_max = (1 << (bits - 1)) - 1
-    bit_min = -(1 << (bits - 1))
+    bit_min = -bit_max - 1
     max = tensor.max()
     min = tensor.min()
-    scale = (max - min) / (pow(2, bits) - 1)
-    zero_point = -torch.round(min * scale) - (pow(2, bits - 1))
+    scale = (max - min) / (1 << bits - 1)
+    zero_point = -torch.round(min * scale) + bit_min
     xi_array = torch.round(tensor / scale) + zero_point
-    return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max)
+    return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=torch.int8)
 
 def stochastic_quantize(tensor, bits):
     """

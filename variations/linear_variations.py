@@ -253,7 +253,7 @@ class QuantizedLinear(nn.Linear):
         assert self.training, "Should be called only during training"
 
         # Applies the fake quantization to the weights
-        self._fake_quantized_weight = _fake_quantize(self.weight, self.weight_bits, self.config.quantization_method)
+        self._fake_quantized_weight = _fake_quantize(self.weight, self.weight_bits, self.config.quantization_linear_method)
         # Uses the quantized weights to compute the output using F.linear
         out = F.linear(input, self._fake_quantized_weight, self.bias)
 
@@ -280,10 +280,10 @@ class QuantizedLinear(nn.Linear):
 
     def _eval(self):
         """Sets the model for inference by quantizing the model"""
-        self.weight_zero_point[0], self.weight_norm, self.quantized_weight = quantize_dictionary[self.config.quantization_method](self.weight, self.weight_bits)
+        self.weight_zero_point[0], self.weight_norm, self.quantized_weight = quantize_dictionary[self.config.quantization_linear_method](self.weight, self.weight_bits)
 
         if self.bias is not None:
-            self.bias_zero_point[0], self.bias_norm, self.quantized_bias = quantize_dictionary[self.config.quantization_method](self.bias, self.accumulation_bits)
+            self.bias_zero_point[0], self.bias_norm, self.quantized_bias = quantize_dictionary[self.config.quantization_linear_method](self.bias, self.accumulation_bits)
 
     def forward(self, input):
         """Passes the input through the model during training and inference"""
@@ -299,7 +299,6 @@ class QuantizedLinear(nn.Linear):
             # Uses quantized weights and bias to compute the output
             out = self.inference_quantized_forward(input)
         return out
-
 
 linear_dictionary = {
     "linear": nn.Linear,
