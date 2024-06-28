@@ -106,10 +106,6 @@ def visualize_weights(weights_dir, out_file, n_layers):
     
     with open(filename, 'rb') as f:
         weights = pickle.load(f)
-
-    for key, value in weights.items():
-        print(key)
-        print(value.shape)
     
     for i in range(n_layers):
         plt.rcParams["figure.figsize"] = [11, 3.5]
