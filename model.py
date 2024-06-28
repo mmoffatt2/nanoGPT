@@ -25,7 +25,7 @@ import torch.utils.checkpoint as checkpoint
 # Variations
 from variations.softmax_variations import softmax_dictionary, Softermax, ConSmax, ConSmaxQuan, SaturatingConSmax, Strongermax, Polymax, SigSoftmax, ExpPolymax, Softplus, Squareplus
 from variations.norm_variations import norm_dictionary, LayerNorm, RMSNorm, pRMSNorm, kRMSNorm
-from variations.position_encoding_variations import RotaryEmbedding, ShortRope, SymmetricalOverlapAngularPositions, FIRE
+from variations.position_encoding_variations import QuantizedEmbedding, RotaryEmbedding, ShortRope, SymmetricalOverlapAngularPositions, FIRE
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
 from quantization.quantize import quantize_dictionary, dequantize, _fake_quantize
@@ -97,7 +97,7 @@ class CausalSelfAttention(nn.Module):
 
         self.linear_variant = linear_dictionary[config.linear_variant]
         # key, query, value projections for all heads, but in a batch
-        if config.linear_variant != "linear" and (config.quantize_attn_q or config.quantize_attn_all):
+        if config.linear_variant != "linear" and (config.quantize_c_attn_q or config.quantize_attn_all):
             self.c_attn_q = self.linear_variant(config.n_embd, config.n_embd, config=config)
         else:
             self.c_attn_q = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
@@ -115,15 +115,16 @@ class CausalSelfAttention(nn.Module):
         self.c_attn_v = nn.Linear(config.n_embd, self.kv_dim, bias=config.bias)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        if config.linear_variant != "linear" and (config.quantize_attn_k or config.quantize_attn_all):
+        if config.linear_variant != "linear" and (config.quantize_c_attn_k or config.quantize_attn_all):
             self.c_attn_k = self.linear_variant(config.n_embd, self.kv_dim, config=config)
-        if config.linear_variant != "linear" and (config.quantize_attn_v or config.quantize_attn_all):
+        if config.linear_variant != "linear" and (config.quantize_c_attn_v or config.quantize_attn_all):
             self.c_attn_v = self.linear_variant(config.n_embd, self.kv_dim, config=config)
         if config.linear_variant != "linear" and (config.quantize_attn_proj or config.quantize_attn_all):
             self.c_proj = self.linear_variant(config.n_embd, config.n_embd, config=config)
 
         # quantization
         self.quantization_bits = config.quantization_bits
+        self.quantize_attn_all = config.quantize_attn_all
         self.quantization_linear_method = config.quantization_linear_method
         self.quantize_q = config.quantize_q
         self.quantize_k = config.quantize_k
@@ -235,9 +236,9 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
         v = v.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
 
-        if self.quantize_q:
+        if self.quantize_q or self.quantize_attn_all:
             q = quantize_helper(self.training, q, self.quantization_bits, self.quantization_linear_method)
-        if self.quantize_k:
+        if self.quantize_k or self.quantize_attn_all:
             k = quantize_helper(self.training, k, self.quantization_bits, self.quantization_linear_method)
 
         y = None
@@ -254,7 +255,7 @@ class CausalSelfAttention(nn.Module):
             else:
               att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
-            if self.quantize_q_k_mult:
+            if self.quantize_q_k_mult or self.quantize_attn_all:
                 att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
 
             # apply masks
@@ -279,9 +280,9 @@ class CausalSelfAttention(nn.Module):
             att = self.attn_dropout(att)
 
             # quantize att and v
-            if self.quantize_softmax:
+            if self.quantize_softmax or self.quantize_attn_all:
                 att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
-            if self.quantize_v:
+            if self.quantize_v or self.quantize_attn_all:
                 v = quantize_helper(self.training, v, self.quantization_bits, self.quantization_linear_method)
 
             if self.n_head != self.n_kv_group:
@@ -291,7 +292,7 @@ class CausalSelfAttention(nn.Module):
                 y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
-        if self.quantize_softmax_v_mult:
+        if self.quantize_softmax_v_mult or self.quantize_attn_all:
             y = quantize_helper(self.training, y, self.quantization_bits, self.quantization_linear_method)
 
         # output projection
@@ -312,6 +313,7 @@ class MLP(nn.Module):
         # Whether the activation is quantized
         self.quantize_activation = config.quantize_activation
         self.quantization_bits = config.quantization_bits
+        self.quantize_mlp_all = config.quantize_mlp_all
         self.quantization_activation_method = config.quantization_activation_method
 
         # Whether to ues swiglu
@@ -340,7 +342,7 @@ class MLP(nn.Module):
         if self.use_swiglu:
             x_in1 = self.c_fc_in1(x)
             x_in1 = self.activation_variant(x_in1)
-            if self.quantize_activation:
+            if self.quantize_activation or self.quantize_mlp_all:
                 x_in1 = quantize_helper(self.training, x_in1, self.quantization_bits, self.quantization_activation_method)
             x_in2 = self.c_fc_in2(x)
             x_out = x_in1 * x_in2
@@ -348,7 +350,7 @@ class MLP(nn.Module):
         else:
             x = self.c_fc(x)
             x = self.activation_variant(x)
-            if self.quantize_activation:
+            if self.quantize_activation or self.quantize_mlp_all:
                 x = quantize_helper(self.training, x, self.quantization_bits, self.quantization_activation_method)
             x = self.c_proj(x)
         x = self.dropout(x)
@@ -421,9 +423,18 @@ class GPT(nn.Module):
         # Shared Parameters Attention
         shared_attn_array = create_shared_param_group("attn", config)
 
+        if config.quantize_wte:
+            word_embd = QuantizedEmbedding(config.vocab_size, config.n_embd, config)
+        else:
+            word_embd = nn.Embedding(config.vocab_size, config.n_embd)
+        if config.quantize_wpe:
+            pos_embd = QuantizedEmbedding(config.block_size, config.n_embd, config)
+        else:
+            pos_embd = nn.Embedding(config.block_size, config.n_embd)
+
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
-            wpe = nn.Embedding(config.block_size, config.n_embd),
+            wte = word_embd,
+            wpe = pos_embd,
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config, mlp=shared_mlp_array[i], attn=shared_attn_array[i]) for i in range(config.n_layer)]),
             ln_f = self.norm_variant_output,
@@ -440,11 +451,6 @@ class GPT(nn.Module):
         # This behavior is deprecated and will be an error in future versions"
         # not 100% sure what this is, so far seems to be harmless. TODO investigate
         self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
-
-        # if config.quantize_wte:
-        #     print(type(self.transformer.wte.weight))
-        #     print(type(self.transformer.wte.weight.data))
-            # self.transformer.wte.weight.data.copy_(quantize_dictionary[config.quantization_wte_method](self.transformer.wte.weight.data, config.quantization_bits)[2])
 
         # init all weights
         self.apply(self._init_weights)

@@ -14,11 +14,12 @@ class GPTConfig:
     quantization_bits: int = 8
     quantization_linear_method: str = "affine_quant"
     quantize_wte: bool = False
-    quantization_wte_method: str = "affine_quant"
+    quantize_wpe: bool = False
+    quantization_embedding_method: str = "affine_quant"
     quantize_attn_all: bool = False
-    quantize_attn_q: bool = False
-    quantize_attn_k: bool = False
-    quantize_attn_v: bool = False
+    quantize_c_attn_q: bool = False
+    quantize_c_attn_k: bool = False
+    quantize_c_attn_v: bool = False
     quantize_q: bool = False
     quantize_k: bool = False
     quantize_v: bool = False

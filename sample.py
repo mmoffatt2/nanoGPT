@@ -41,8 +41,6 @@ def parse_args():
     parser.add_argument('--chart_type', type=str, default='heatmap', choices=['heatmap', 'barchart'], help="Type of chart to display: 'heatmap' or 'barchart'")
     parser.add_argument('--block_size', type=int, default=None, help="Block size for context length, default is model's block size")
     parser.add_argument('--sym_rot_num_angles', type=int, default=None, help="Number of angles for symmetrical rotary embedding")
-    parser.add_argument("--quantize_wte", default=None, action=argparse.BooleanOptionalAction, help="Whether the word embedding is quantized")
-    parser.add_argument("--quantization_wte_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for word embedding quantization")
     return parser.parse_args()
 
 
@@ -177,11 +175,6 @@ def main():
     model.to(args.device)
     if args.compile:
         model = torch.compile(model)
-
-    print(model.transformer.wte.weight)
-    if args.quantize_wte:
-        model.transformer.wte.weight.data.copy_(quantize_dictionary[args.quantization_wte_method](model.transformer.wte.weight.data, model.config.quantization_bits)[2])
-    print(model.transformer.wte.weight)
 
     if args.visualize_weights_dir:
         if not args.quant_weights_file:
