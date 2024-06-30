@@ -13,6 +13,7 @@ import tiktoken
 from rich import print
 from collections import OrderedDict
 from torch.nn import functional as F
+from quantization.quantize import quantize_dictionary
 
 from model import GPT, GPTConfig
 
@@ -105,11 +106,6 @@ def visualize_weights(weights_dir, out_file, n_layers):
     
     with open(filename, 'rb') as f:
         weights = pickle.load(f)
-    print(weights.keys())
-    #print(weights.values())
-    for key, value in weights.items():
-        print(key)
-        print(value.shape)
     
     for i in range(n_layers):
         plt.rcParams["figure.figsize"] = [11, 3.5]
@@ -189,10 +185,21 @@ def main():
         model.update_num_angles(args.sym_rot_num_angles)
 
     load_meta = False
+    meta_path = None
     separator_token = None
     if args.init_from == 'resume' and 'config' in checkpoint and 'dataset' in checkpoint['config']:
-        meta_path = os.path.join('data', checkpoint['config']['dataset'], 'meta.pkl')
-        load_meta = os.path.exists(meta_path)
+
+        meta_paths = [
+                os.path.join(args.out_dir, 'meta.pkl'),
+                os.path.join('data', checkpoint['config']['dataset'], 'meta.pkl')
+                ]
+
+        load_meta = False
+        for meta_path in meta_paths:
+            if os.path.exists(meta_path):
+                load_meta = True
+                break
+
     if load_meta:
         print(f"Loading meta from {meta_path}...")
         with open(meta_path, 'rb') as f:

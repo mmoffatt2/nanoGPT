@@ -11,11 +11,27 @@ class GPTConfig:
     dropout: float = 0.0
     window_size: int = 128
     gate: bool = False
-    quantization_choice: str = "none" # Choices: "none" "quantize" "binarize" "irbinarize"
     quantization_bits: int = 8
-    quantize_attention: bool = True
-    softmax_quantize: bool = False
-    v_quantize: bool = False
+    quantization_linear_method: str = "affine_quant"
+    quantize_wte: bool = False
+    quantize_wpe: bool = False
+    quantization_embedding_method: str = "affine_quant"
+    quantize_attn_all: bool = False
+    quantize_c_attn_q: bool = False
+    quantize_c_attn_k: bool = False
+    quantize_c_attn_v: bool = False
+    quantize_q: bool = False
+    quantize_k: bool = False
+    quantize_v: bool = False
+    quantize_q_k_mult: bool = False
+    quantize_softmax_v_mult: bool = False
+    quantize_softmax: bool = False
+    quantize_activation: bool = False
+    quantization_activation_method: str = "affine_quant"
+    quantize_attn_proj: bool = False
+    quantize_mlp_all: bool = False
+    quantize_mlp_up: bool = False
+    quantize_mlp_down: bool = False
 
     # Training options
     ## Gradient Checkpointing - More memory efficient (can do long contexts), but is slower

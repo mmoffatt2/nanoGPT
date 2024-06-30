@@ -1,14 +1,30 @@
 import torch
 from torch import nn
-from torch.nn import functional as F
 
-
-def quantize(tensor, bits):
+def affine_quantize(tensor, bits):
     """
     Quantization function
     :param tensor: Tensor to be quantized
     :param bits: Number of bits of quantization
-    :return: Quantized code
+    :return: zero point, scale, quantized tensor
+    """
+    bit_max = (1 << (bits - 1)) - 1
+    bit_min = -bit_max - 1
+    max = tensor.max()
+    min = tensor.min()
+    scale = (max - min) / (1 << bits - 1)
+    zero_point = -torch.round(min * scale) + bit_min
+    xi_array = torch.round(tensor / scale) + zero_point
+    return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=torch.int8)
+
+def stochastic_quantize(tensor, bits):
+    """
+    Quantization function
+    :param tensor: Tensor to be quantized
+    :param bits: Number of bits of quantization
+    :return: zero point, scale, quantized tensor
+    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
+    Source License: MIT
     """
 
     # Steps:
@@ -46,22 +62,17 @@ def quantize(tensor, bits):
     sign_xi_array = (sign_array * xi_array).to(dtype=torch.int8)
     norm = norm / s
 
-    return norm, sign_xi_array
+    return 0, norm, sign_xi_array
 
-
-def dequantize(norm, sign_xi_array):
+def dequantize(zero_point, scale, tensor):
     """
-    Dequantize the quantization code
-    :param norm: Norm of code
-    :param sign_xi_array: Rounded vector of code
+    Dequantize the quantizated tensor
+    :param zero_point: zero point of tensor
+    :param scale: scale of tensor
+    :param tensor: quantized tensor
     :return: Dequantized weights
     """
-
-    # weight ≈ (norm / s) * (tensor / norm * s)
-    weights = norm * sign_xi_array
-
-    return weights
-
+    return (tensor - zero_point) * scale
 
 class FakeLinearQuantizationFunction(torch.autograd.Function):
     """Simulates error caused by quantization. Uses Straight-Through Estimator for Back prop
@@ -70,7 +81,7 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
     """
 
     @staticmethod
-    def forward(ctx, input, bits=7):
+    def forward(ctx, input, bits=7, quantization_method="affine_quant"):
         """
         Forward pass
         :param ctx: Context object to store information for the backward pass (not used in this case)
@@ -82,8 +93,8 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
         # Quantize the input tensor using the quantize function.
         # Dequantize the quantized values using the dequantize function.
         # Return the dequantized tensor, which approximates the input tensor but includes the quantization error.
-        norm, quantized_weight = quantize(input, bits)
-        return dequantize(norm, quantized_weight)
+        zero_point, norm, quantized_weight = quantize_dictionary[quantization_method](input, bits)
+        return dequantize(zero_point, norm, quantized_weight)
 
     @staticmethod
     def backward(ctx, grad_output):
@@ -92,86 +103,9 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
         # ignoring the quantization operation
         return grad_output, None, None
 
+quantize_dictionary = {
+    "affine_quant": affine_quantize,
+    "stochastic_quant": stochastic_quantize,
+}
 
 _fake_quantize = FakeLinearQuantizationFunction.apply
-
-
-class QuantizedLinear(nn.Linear):
-    """Linear layer with quantization aware training capability
-    Source: https://github.com/Alexstrasza98/Transformer-Quantization/blob/main
-    Source License: MIT
-    """
-
-    def __init__(self, weight_bits, in_features, out_features, warmup_step=0, **kwargs):
-        super().__init__(in_features, out_features, **kwargs)
-
-        self.weight_bits = weight_bits
-
-        if self.weight_bits < 1:
-            raise ValueError(f"weight_bits={self.weight_bits} must be higher than 0 ")
-        
-        self.warmup_step = warmup_step
-        self.accumulation_bits = 32
-
-        # Placeholder for quantized weights during training
-        self._fake_quantized_weight = None
-        if kwargs.get("bias", True):
-            self.register_buffer("quantized_bias", None)
-            self.register_buffer("bias_norm", None)
-
-        self.register_buffer("_step", torch.zeros(1))
-
-        self.register_buffer("quantized_weight", None)
-        self.register_buffer("weight_norm", None)
-
-    def training_quantized_forward(self, input):
-        """Fake quantizes weights. Function should only be used while training"""
-        assert self.training, "Should be called only during training"
-
-        # Applies the fake quantization to the weights
-        self._fake_quantized_weight = _fake_quantize(self.weight, self.weight_bits)
-        # Uses the quantized weights to compute the output using F.linear
-        out = F.linear(input, self._fake_quantized_weight, self.bias)
-
-        return out
-
-    def inference_quantized_forward(self, input):
-        """Simulate quantized inference. Function should be called only during inference"""
-        assert not self.training, "Should be called only during inference"
-
-        # Compute the dequantized weight
-        weight = self.weight_norm * self.quantized_weight
-
-        # Compute the dequantized bias
-        if self.bias is not None:
-            bias = self.bias_norm * self.quantized_bias
-
-        # Uses the dequantized weights and bias to compute the output using F.linear
-        if self.bias:
-            out = F.linear(input, weight, bias)
-        else:
-            out = F.linear(input, weight)
-
-        return out
-
-    def _eval(self):
-        """Sets the model for inference by quantizing the model"""
-        self.weight_norm, self.quantized_weight = quantize(self.weight, self.weight_bits)
-
-        if self.bias is not None:
-            self.bias_norm, self.quantized_bias = quantize(self.bias, self.accumulation_bits)
-
-    def forward(self, input):
-        """Passes the input through the model during training and inference"""
-        if self.training:
-            if self._step > self.warmup_step:
-                out = self.training_quantized_forward(input)
-            else:
-                out = super().forward(input)
-            self._step += 1
-        else:
-            # Prepares the model for inference by quantizing weights and bias
-            self._eval()
-            # Uses quantized weights and bias to compute the output
-            out = self.inference_quantized_forward(input)
-        return out

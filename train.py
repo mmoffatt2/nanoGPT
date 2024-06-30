@@ -1,26 +1,24 @@
 import argparse
-import sys
-from rich import print
-import os
-import time
-import csv
-from datetime import datetime
-import math
-import pickle
 from contextlib import nullcontext
-import plotly.graph_objects as go
-import seaborn as sns
-import matplotlib.pyplot as plt
+import csv
+import json
+import math
+import os
+import pickle
+import shutil
+import sys
+import time
 
-import pandas as pd
+import matplotlib.pyplot as plt
 import numpy as np
+import plotly.graph_objects as go
+from rich import print
 import torch
+from torch.distributed import destroy_process_group, init_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed import init_process_group, destroy_process_group
 from torch.utils.tensorboard import SummaryWriter
 
-from model import GPTConfig, GPT
-
+from model import GPT, GPTConfig
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -35,11 +33,11 @@ def parse_args():
     training_group.add_argument('--eval_interval', default=250, type=int)
     training_group.add_argument('--log_interval', default=10, type=int)
     training_group.add_argument('--eval_iters', default=200, type=int)
-    training_group.add_argument('--eval_only', action='store_true')
+    training_group.add_argument('--eval_only', default=False, action=argparse.BooleanOptionalAction)
 
     # Checkpoint args
-    training_group.add_argument('--only_save_checkpoint_at_end', action='store_true')
-    training_group.add_argument('--always_save_checkpoint', action='store_true')
+    training_group.add_argument('--only_save_checkpoint_at_end', default=False, action=argparse.BooleanOptionalAction)
+    training_group.add_argument('--always_save_checkpoint', default=False, action=argparse.BooleanOptionalAction)
     training_group.add_argument('--patience', default=None, type=int, help="if set, will stop training if the number of evaluations since val loss was seen to decrease exceeds 'patience' setting.")
     training_group.add_argument('--init_from', default='scratch', choices=['scratch', 'prev_run', 'resume', 'gpt2*'], type=str)
     training_group.add_argument('--prev_run_ckpt', default='', type=str)
@@ -79,9 +77,7 @@ def parse_args():
     model_group.add_argument('--bias', default=False, action=argparse.BooleanOptionalAction, help="only used for layernorm variation option")
     model_group.add_argument("--prmsnorm_pct", default=0.0625, type=float, help="percentage (1 being 100 percent) of first entries used for partial rms" )
     model_group.add_argument("--krmsnorm_num", default=10, type=int, help="max number of first entries for partial rms" )
-    model_group.add_argument("--quantization_choice", type=str, default="none", choices=["none", "quantize", "binarize"], help="quantization choice for model")
-    model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
-    model_group.add_argument("--quantize_attention", default=True, action=argparse.BooleanOptionalAction, help="Whether the linear layers in attention are quantized")
+
     # ACTIVATION VARIATIONS
     model_group.add_argument(
         "--activation_variant",
@@ -117,8 +113,30 @@ def parse_args():
             "bitlinear",
             "bitlinear_1p58",
             "bitlinear_optimized",
+            "quantized_linear"
         ],
     )
+    model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
+    model_group.add_argument("--quantization_linear_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for linear quantization")
+    model_group.add_argument("--quantize_wte", default=None, action=argparse.BooleanOptionalAction, help="Whether the word embedding is quantized")
+    model_group.add_argument("--quantize_wpe", default=None, action=argparse.BooleanOptionalAction, help="Whether the word position embedding is quantized")
+    model_group.add_argument("--quantization_embedding_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for embedding quantization")
+    model_group.add_argument("--quantize_attn_all", default=None, action=argparse.BooleanOptionalAction, help="Whether all linear layers in attention use linear variant")
+    model_group.add_argument("--quantize_c_attn_q", default=None, action=argparse.BooleanOptionalAction, help="Whether the query linear layer uses linear variant")
+    model_group.add_argument("--quantize_c_attn_k", default=None, action=argparse.BooleanOptionalAction, help="Whether the key linear layer uses linear variant")
+    model_group.add_argument("--quantize_c_attn_v", default=None, action=argparse.BooleanOptionalAction, help="Whether the value linear layer uses linear variant")
+    model_group.add_argument("--quantize_q", default=None, action=argparse.BooleanOptionalAction, help="Whether the query output is quantized")
+    model_group.add_argument("--quantize_k", default=None, action=argparse.BooleanOptionalAction, help="Whether the key output is quantized")
+    model_group.add_argument("--quantize_v", default=None, action=argparse.BooleanOptionalAction, help="Whether the value output is quantized")
+    model_group.add_argument("--quantize_q_k_mult", default=None, action=argparse.BooleanOptionalAction, help="Whether the query key matrix mult output is quantized")
+    model_group.add_argument("--quantize_softmax_v_mult", default=None, action=argparse.BooleanOptionalAction, help="Whether the softmax value matrix mult output is quantized")
+    model_group.add_argument("--quantize_softmax", default=None, action=argparse.BooleanOptionalAction, help="Whether the softmax variant output is quantized")
+    model_group.add_argument("--quantize_attn_proj", default=None, action=argparse.BooleanOptionalAction, help="Whether the output projection in attention uses linear variant")
+    model_group.add_argument("--quantize_mlp_all", default=None, action=argparse.BooleanOptionalAction, help="Whether all MLP layers use linear variant")
+    model_group.add_argument("--quantize_mlp_up", default=None, action=argparse.BooleanOptionalAction, help="Whether the mlp up layer uses linear variant")
+    model_group.add_argument("--quantize_mlp_down", default=None, action=argparse.BooleanOptionalAction, help="Whether the mlp down layer uses linear variant")
+    model_group.add_argument("--quantize_activation", default=None, action=argparse.BooleanOptionalAction, help="Whether the activation output is quantized")
+    model_group.add_argument("--quantization_activation_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for activation quantization")
 
     # POSITIONAL EMBEDDING VARIATIONS
     model_group.add_argument('--use_rotary_embeddings', default=False, action=argparse.BooleanOptionalAction)
@@ -286,7 +304,7 @@ def initialize_statistics(num_layers, num_heads):
             'o_max': [],
             'o_min': []
         }
-    
+
         for _ in range(num_layers):
             stats['mean'].append([[] for _ in range(num_heads)])
             stats['median'].append([[] for _ in range(num_heads)])
@@ -298,15 +316,17 @@ def initialize_statistics(num_layers, num_heads):
             stats['o_stdev'].append([[] for _ in range(num_heads)])
             stats['o_max'].append([[] for _ in range(num_heads)])
             stats['o_min'].append([[] for _ in range(num_heads)])
-        
+
         return stats
 
 
 class Trainer:
-    
-    def __init__(self, args, model_group):
+
+    def __init__(self, args, model_group, training_group, logging_group):
         self.args = args
         self.model_group = model_group
+        self.training_group = training_group 
+        self.logging_group = logging_group
 
         # typically make the decay iters equal to max_iters
         if self.args.lr_decay_match_max_iters:
@@ -350,14 +370,25 @@ class Trainer:
         self.ptdtype = {"bfloat16" : torch.bfloat16, "float16" : torch.float16, "float32" : torch.float32}[self.args.dtype]
         self.ctx = nullcontext() if self.device_type == 'cpu' else torch.amp.autocast(device_type=self.device_type, dtype=self.ptdtype)
 
-        # Model
+        # Model settings
         # TODO only add if they are defined from the argparse
         self.model_args = {action.dest: getattr(self.args, action.dest) for action in self.model_group._group_actions}
         self.model_args['vocab_size'] = None
         self.model_args['use_gradient_checkpointing'] = self.args.use_gradient_checkpointing
 
+        # Training settings
+        self.training_args = {action.dest: getattr(self.args, action.dest) for action in self.training_group._group_actions}
+
         if self.args.init_from == 'scratch':
             self.model_args['vocab_size'] = self.get_vocab_size_from_meta()
+
+            # Save full configuration used for training
+            config_json = {**self.model_args, **self.training_args}
+            with open(self.args.out_dir + "/full_config.json", "w") as configuration_file:
+                json.dump(config_json, configuration_file, indent=4)
+            with open(self.args.out_dir + "/best_val_loss_and_iter.txt", 'w') as file:
+                print("resetting best val loss file")
+
             self.load_data()
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
@@ -444,6 +475,8 @@ class Trainer:
     def get_vocab_size_from_meta(self):
         # Data loader
         meta_path = os.path.join('data', self.args.dataset, 'meta.pkl')
+        # Save a copy of meta.pkl tokenization into the output folder
+        self.copy_file_to_directory(meta_path, self.args.out_dir)
         if os.path.exists(meta_path):
             with open(meta_path, 'rb') as f:
                 meta = pickle.load(f)
@@ -453,6 +486,18 @@ class Trainer:
                     sys.exit(f"Error: 'vocab_size' key not found in {meta_path}")
         else:
             sys.exit(f"Error: File not found - {meta_path}")
+
+    def copy_file_to_directory(self, src_file, dest_dir):
+        try:
+            # Ensure the destination directory exists
+            if not os.path.exists(dest_dir):
+                os.makedirs(dest_dir)
+
+            # Copy the file
+            shutil.copy(src_file, dest_dir)
+            print(f"File {src_file} copied to {dest_dir}")
+        except Exception as e:
+            print(f"Error copying file: {e}")
 
     def load_data(self):
         if self.model_args['vocab_size'] is None:
@@ -586,11 +631,11 @@ class Trainer:
         # ticks
         ax.get_xaxis().tick_bottom()
         ax.get_yaxis().tick_left()
-            
+
         ax.set_title(f"Boxplot of {data_type} {stat_type}")
         plt.savefig(f'{directory_path}/{data_type}_{stat_type}_boxplot_{timestamp}.png')
         plt.close()
-    
+
     def plot_statistics(self, graph_y_labels):
             statistics_to_plot = []
             timestamp = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
@@ -663,7 +708,7 @@ class Trainer:
                             for i in x_labels:
                                 plot_data[-1].append(data[i])
                     plot_data = np.array(plot_data)
-                    
+
                     ######
                     fig, ax = plt.subplots(figsize=(8,10))
                     im = ax.imshow(plot_data)
@@ -672,7 +717,7 @@ class Trainer:
                     ax.set_yticks(np.arange(len(graph_y_labels)), labels=graph_y_labels)
                     plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
                     ax.set_xlabel("Number of Iterations", fontweight="bold")
-                    
+
                     # Create a colorbar
                     cbar = ax.figure.colorbar(im, ax=ax)
                     cbar.ax.set_ylabel(stat_type, rotation=-90, va="bottom")
@@ -715,6 +760,10 @@ class Trainer:
                     if losses['val'] < self.best_val_loss:
                         self.iter_num_best_val_loss = self.iter_num
                         self.best_val_loss = losses['val']
+                        # Save best validation loss
+                        with open(os.path.join(self.args.out_dir, 'best_val_loss_and_iter.txt'), "w") as best_loss_file:
+                            best_loss_file.write(str(self.best_val_loss.item())+","+str(self.iter_num))
+                        # Reset early exit counter
                         num_steps_with_worse_loss = 0
                     if self.iter_num > 0:
                         checkpoint = {
@@ -728,6 +777,7 @@ class Trainer:
                             'config': vars(self.args),
                         }
                         print(f"saving checkpoint to {self.args.out_dir}")
+                        # Save checkpoint
                         torch.save(checkpoint, os.path.join(self.args.out_dir, 'ckpt.pt'))
                 if self.args.patience is not None and num_steps_with_worse_loss >= self.args.patience:
                     print(f"Early Stopping: loss has not decreased in {self.args.patience + 1} steps")
@@ -807,13 +857,13 @@ class Trainer:
 
                 box_plot_input_data = []
                 box_plot_output_data = []
-                        
+
                 for layer in range (self.args.n_layer):
                     # Inputs
                     inputs_location = f"transformer.h[{layer}].attn.softmax_layer_attn.inputs"
-                    
+
                     softmax_input = eval(f"self.model.{inputs_location}").to('cpu').to(torch.float32)
-                    
+
 
                     ## Get first batch
                     i_first_batch = softmax_input[0]
@@ -822,7 +872,7 @@ class Trainer:
                     for i, i_head in enumerate(i_first_batch):
                         ## Flatten across heads, height, and width
                         flattened = i_head.view(-1)
-                        
+
                         ## Calculate statistics
                         i_means.append(torch.nanmean(flattened).item())
                         i_medians.append(torch.nanmedian(flattened).item())
@@ -854,7 +904,7 @@ class Trainer:
 
                     outputs_location = f"transformer.h[{layer}].attn.softmax_layer_attn.outputs"
                     softmax_output = eval(f"self.model.{outputs_location}").to('cpu').to(torch.float32)
-                   
+
                     o_first_batch = softmax_output[0]
                     o_first_batch[o_first_batch == float('-inf')] = float('NaN')
                     for i, o_head in enumerate(o_first_batch):
@@ -909,7 +959,7 @@ class Trainer:
                         self.create_box_plot(box_plot_input_data, graph_y_labels, timestamp, self.args.box_plot_statistic, self.iter_num)
                     else:
                         self.create_box_plot(box_plot_output_data, graph_y_labels, timestamp, self.args.box_plot_statistic, self.iter_num)
-                    
+
 
                 self.write_to_csv(self.iter_num,
                                   *i_sum_vals,
@@ -958,6 +1008,7 @@ class Trainer:
             self.iter_num += 1
             local_iter_num += 1
 
+            # End of training actions
             if self.iter_num > self.args.max_iters:
                 self.plot_statistics(graph_y_labels)
                 if self.args.only_save_checkpoint_at_end:
@@ -985,8 +1036,8 @@ class Trainer:
             wandb.finish()
 
 def main():
-    args, model_group, _, _ = parse_args()
-    trainer = Trainer(args, model_group)
+    args, model_group, training_group, logging_group = parse_args()
+    trainer = Trainer(args, model_group, training_group, logging_group)
     trainer.train()
 
     if trainer.ddp:
