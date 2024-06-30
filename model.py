@@ -141,9 +141,7 @@ class CausalSelfAttention(nn.Module):
         self.window_size = config.window_size
         self.n_embd = config.n_embd
         self.gate = config.gate
-        self.softmax_quantize = config.softmax_quantize
-        self.v_quantize = config.v_quantize
-        self.quantization_bits = config.quantization_bits
+
         self.use_fire_embeddings = None
         if config.use_fire_embeddings:
             self.use_fire_embeddings = config.use_fire_embeddings
@@ -198,14 +196,6 @@ class CausalSelfAttention(nn.Module):
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
-        if self.softmax_quantize:
-            self.register_buffer("attention", torch.tensor(1.0))
-            self.register_buffer("softmax_quantized_norm", torch.tensor(1.0))
-            self.register_buffer("softmax_quantized_matrix", torch.tensor(0.0))
-        if self.v_quantize:
-            self.register_buffer("v", torch.tensor(1.0))
-            self.register_buffer("v_quantized_norm", torch.tensor(1.0))
-            self.register_buffer("v_quantized_matrix", torch.tensor(0.0))
 
 
     def forward(self, x):
