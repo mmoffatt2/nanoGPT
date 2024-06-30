@@ -95,7 +95,7 @@ def save_quantized_weights(state_dict, out_file):
     for k, v in list(state_dict.items()):
         if k.endswith("binarized_weight") or k.endswith("binarization_bias"):
             to_save[k] = v.cpu().numpy()
-        if k.endswith("quantized_bias") or k.endswith("bias_norm") or k.endswith("quantized_weight") or k.endswith("weight_norm"):
+        if k.endswith("quantized_bias") or k.endswith("bias_norm") or k.endswith("zero_point") or k.endswith("quantized_weight") or k.endswith("weight_norm"):
             to_save[k] = v.cpu().numpy()
 
     with open(f"{out_file}.pkl", 'wb') as f:
@@ -259,4 +259,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
