@@ -170,47 +170,82 @@ class IRLinear(nn.Module):
 
     def __repr__(self):
         return self.__class__.__name__ + " (" + str(self.in_features) + " -> " + str(self.out_features) + ")"
-    
 
-def binarizer(model, binarize_layer='basic', qk_only=False, qv_only=False, kv_only=False):
-    """
-    Recursively replace linear layers with binary layers
-    ---------
-    Arguments:
-    model      - Model to be binarized
-    pattern    - Binarization pattern
-    skip_final - whether to leave final layer unbinarized
-    qk_only    - whether to only binarize Q net and K net, leaving V net
-    ---------
-    No return, the original model is binarized
-    """
-    
-    for i, block in enumerate(model.transformer.h):
-        for sub_name, sub_layer in getattr(block, "mlp").named_children():
-            if type(sub_layer) == nn.Linear:
-            # Binarization
-                if (kv_only == True) & (sub_name == 'c_attn_q'):
-                    continue
-                if (qv_only == True) & (sub_name == 'c_attn_k'):
-                    continue
-                if (qk_only == True) & (sub_name == 'c_attn_v'):
-                    continue
-                    
-                if binarize_layer == 'basic':
-                    b = BinarizedLinear(sub_layer.in_features, sub_layer.out_features)
-                elif binarize_layer == 'ir':
-                    b = IRLinear(sub_layer.in_features, sub_layer.out_features)  
-                model.__dict__["_modules"]["transformer"]["h"][i].mlp[sub_name] = b
-        for sub_name, sub_layer in getattr(block, "attn").named_children():
-            if type(sub_layer) == nn.Linear:
-                if (kv_only == True) & (sub_name == 'c_attn_q'):
-                    continue
-                if (qv_only == True) & (sub_name == 'c_attn_k'):
-                    continue
-                if (qk_only == True) & (sub_name == 'c_attn_v'):
-                    continue
-                if binarize_layer == 'basic':
-                    b = BinarizedLinear(sub_layer.in_features, sub_layer.out_features)
-                elif binarize_layer == 'ir':
-                    b = IRLinear(sub_layer.in_features, sub_layer.out_features)  
-                model.__dict__["_modules"]["transformer"]["h"][i].attn[sub_name] = b
+
+class TernaryLinearFunction(Function):
+
+    @staticmethod
+    def forward(ctx, input, weight, bias=None):
+        # ternarize weights
+        threshold = 0.5 * torch.mean(torch.abs(weight))
+        weight_mask = torch.abs(weight) < threshold
+        ternary_weight = torch.sign(weight) * (~weight_mask).float()
+        
+        # save for grad computing
+        ctx.save_for_backward(input, ternary_weight, weight_mask, bias)
+        
+        # linear layer
+        output = input.matmul(ternary_weight.t())
+        if bias is not None:
+            output += bias
+
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        # retrieve saved variables
+        input, ternary_weight, weight_mask, bias = ctx.saved_variables
+        
+        # computing grads
+        grad_input = grad_weight = grad_bias = None
+
+        if ctx.needs_input_grad[0]:
+            grad_input = grad_output.matmul(ternary_weight)
+
+        if ctx.needs_input_grad[1]:
+            # if weights' absolute value less than threshold, no grads
+            grad_weight = grad_output.transpose(-1, -2).matmul(input)
+            grad_weight.masked_fill_(weight_mask, 0.0)
+
+        if bias is not None and ctx.needs_input_grad[2]:
+            grad_bias = grad_output.sum(0).squeeze(0)
+
+        return grad_input, grad_weight, grad_bias
+
+
+class TernarizedLinear(nn.Module):
+
+    def __init__(self, in_features, out_features, bias=True):
+        super(TernarizedLinear, self).__init__()
+        self.in_features = in_features
+        self.out_features = out_features
+        self.ternarized_weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.register_buffer("t_weight", torch.Tensor(out_features, in_features))
+
+        if bias:
+            self.ternarization_bias = nn.Parameter(torch.Tensor(out_features))
+        else:
+            self.register_parameter("bias", None)
+
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        self.ternarized_weight.data.normal_(0, 1 * (math.sqrt(1.0 / self.in_features)))
+        if self.ternarization_bias is not None:
+            self.ternarization_bias.data.zero_()
+
+    def forward(self, input):
+        if self.ternarization_bias is not None:
+            self.t_weight = self.ternarize_weights(self.ternarized_weight)
+            return TernaryLinearFunction.apply(input, self.ternarized_weight, self.ternarization_bias)
+        else:
+            raise Exception
+
+    def ternarize_weights(self, weight):
+        threshold = 0.5 * torch.mean(torch.abs(weight))
+        weight_mask = torch.abs(weight) < threshold
+        ternary_weight = torch.sign(weight) * (~weight_mask).float()
+        return ternary_weight
+
+    def __repr__(self):
+        return self.__class__.__name__ + " (" + str(self.in_features) + " -> " + str(self.out_features) + ")"

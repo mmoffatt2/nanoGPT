@@ -4,6 +4,7 @@ from torch.nn import functional as F
 import math
 
 from quantization.quantize import _fake_quantize, quantize_dictionary
+from quantization.binarize import BinarizedLinear
 
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
@@ -306,4 +307,5 @@ linear_dictionary = {
     "bitlinear_optimized": BitLinearOptimized,
     "bitlinear_1p58": BitLinear1p58,
     "quantized_linear": QuantizedLinear,
+    "binarized_linear": BinarizedLinear,
 }
