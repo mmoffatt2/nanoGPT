@@ -303,7 +303,7 @@ class QuantizedLinear(nn.Linear):
         return out
 
 
-class BinaryLinearFunction(F):
+class BinaryLinearFunction():
     
     """
     Implements binarization function for linear layer with Straight-Through Estimation (STE)
@@ -383,7 +383,7 @@ class BinarizedLinear(nn.Module):
         return self.__class__.__name__ + " (" + str(self.in_features) + " -> " + str(self.out_features) + ")"
 
     
-class IRLinearFunction(F):
+class IRLinearFunction():
     """
     Implements binarization function for linear layer with Straight-Through Estimation (STE)
     """
@@ -471,7 +471,7 @@ class IRLinear(nn.Module):
         return self.__class__.__name__ + " (" + str(self.in_features) + " -> " + str(self.out_features) + ")"
 
 
-class TernaryLinearFunction(F):
+class TernaryLinearFunction():
 
     @staticmethod
     def forward(ctx, input, weight, bias=None):

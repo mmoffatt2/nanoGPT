@@ -111,7 +111,8 @@ def parse_args():
             "bitlinear",
             "bitlinear_1p58",
             "bitlinear_optimized",
-            "quantized_linear"
+            "quantized_linear",
+            "binarized_linear",
             "ternarized_linear"
         ],
     )
