@@ -28,8 +28,6 @@ from variations.norm_variations import norm_dictionary, LayerNorm, RMSNorm, pRMS
 from variations.position_encoding_variations import QuantizedEmbedding, RotaryEmbedding, ShortRope, SymmetricalOverlapAngularPositions, FIRE
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
-from quantization.quantize import quantize_dictionary, dequantize, _fake_quantize
-
 
 
 def create_shared_param_group(layer_type, config):
@@ -97,7 +95,6 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0
 
         self.linear_variant = linear_dictionary[config.linear_variant]
-
         # key, query, value projections for all heads, but in a batch
         if config.linear_variant != "linear" and (config.quantize_c_attn_q or config.quantize_attn_all):
             self.c_attn_q = self.linear_variant(config.n_embd, config.n_embd, config=config)
@@ -135,7 +132,6 @@ class CausalSelfAttention(nn.Module):
         self.quantize_softmax_v_mult = config.quantize_softmax_v_mult
         self.quantize_softmax = config.quantize_softmax
 
-
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -144,7 +140,6 @@ class CausalSelfAttention(nn.Module):
         self.window_size = config.window_size
         self.n_embd = config.n_embd
         self.gate = config.gate
-
         self.use_fire_embeddings = None
         if config.use_fire_embeddings:
             self.use_fire_embeddings = config.use_fire_embeddings
@@ -236,7 +231,6 @@ class CausalSelfAttention(nn.Module):
                 k = k * gate_kv
                 v = v * gate_kv
 
-
         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, n_h, T, hs)
         k = k.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
         v = v.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
@@ -295,7 +289,6 @@ class CausalSelfAttention(nn.Module):
                 y = att @ v_repeated # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
             else:
                 y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         if self.quantize_softmax_v_mult or self.quantize_attn_all:

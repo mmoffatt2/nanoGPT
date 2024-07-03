@@ -2,10 +2,9 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 import math
-import pdb
 
 from quantization.quantize import _fake_quantize, quantize_dictionary
-from quantization.binarize import BinarizedLinear
+
 
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
@@ -416,7 +415,6 @@ class IRLinearFunction():
         # retrieve saved variables
         input, weight_b, weight_norm, bias, weight_std, t, k = ctx.saved_variables
         
-#         pdb.set_trace()
         # computing grads
         grad_input = grad_weight = grad_bias = None
 
