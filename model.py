@@ -29,7 +29,6 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
 from quantization.quantize import quantize_dictionary, dequantize, _fake_quantize
-from quantization.binarize import BinarizedLinear, TernarizedLinear
 
 
 
@@ -98,23 +97,12 @@ class CausalSelfAttention(nn.Module):
         assert config.n_embd % config.n_head == 0
 
         self.linear_variant = linear_dictionary[config.linear_variant]
-        #binarization and ternarization
-        self.binarize_q = config.binarize_q
-        self.binarize_k = config.binarize_k
-        self.binarize_v = config.binarize_v
-        self.ternarize_q = config.ternarize_q
-        self.ternarize_k = config.ternarize_k
-        self.ternarize_v = config.ternarize_v
+
         # key, query, value projections for all heads, but in a batch
         if config.linear_variant != "linear" and (config.quantize_c_attn_q or config.quantize_attn_all):
             self.c_attn_q = self.linear_variant(config.n_embd, config.n_embd, config=config)
         else:
             self.c_attn_q = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-            if self.binarize_q:
-                self.c_attn_q = BinarizedLinear(config.n_embd, config.n_embd)
-                print("binarized q")
-            if self.ternarize_q:
-                self.c_attn_q = TernarizedLinear(config.n_embd, config.n_embd)
 
         self.n_head = config.n_head
         if config.n_kv_group == None:

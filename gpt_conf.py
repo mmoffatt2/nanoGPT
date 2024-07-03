@@ -33,13 +33,6 @@ class GPTConfig:
     quantize_mlp_up: bool = False
     quantize_mlp_down: bool = False
 
-    binarize_q: bool = False
-    binarize_k: bool = False
-    binarize_v: bool = False
-    ternarize_q: bool = False
-    ternarize_k: bool = False
-    ternarize_v: bool = False
-
     # Training options
     ## Gradient Checkpointing - More memory efficient (can do long contexts), but is slower
     use_gradient_checkpointing: bool = False
