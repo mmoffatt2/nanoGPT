@@ -111,7 +111,9 @@ def parse_args():
             "bitlinear",
             "bitlinear_1p58",
             "bitlinear_optimized",
-            "quantized_linear"
+            "quantized_linear",
+            "binarized_linear",
+            "ternarized_linear"
         ],
     )
     model_group.add_argument("--quantization_bits", type=int, default=8, help="number of bits for quantization")
