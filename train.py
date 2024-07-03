@@ -138,7 +138,6 @@ def parse_args():
     model_group.add_argument("--quantize_activation", default=None, action=argparse.BooleanOptionalAction, help="Whether the activation output is quantized")
     model_group.add_argument("--quantization_activation_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for activation quantization")
 
-
     # POSITIONAL EMBEDDING VARIATIONS
     model_group.add_argument('--use_rotary_embeddings', default=False, action=argparse.BooleanOptionalAction)
     model_group.add_argument('--sym_rot_num_angles', type=int, default=512, help="number of angles to use for symmetric rope variant")

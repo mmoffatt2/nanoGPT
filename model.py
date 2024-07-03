@@ -28,7 +28,7 @@ from variations.norm_variations import norm_dictionary, LayerNorm, RMSNorm, pRMS
 from variations.position_encoding_variations import QuantizedEmbedding, RotaryEmbedding, ShortRope, SymmetricalOverlapAngularPositions, FIRE
 from variations.activation_variations import SquaredReLU, activation_dictionary
 from variations.linear_variations import BitLinear1p58, BitLinear, BitLinearOptimized, linear_dictionary
-
+from quantization.quantize import quantize_dictionary, dequantize, _fake_quantize
 
 def create_shared_param_group(layer_type, config):
     shared_size = None

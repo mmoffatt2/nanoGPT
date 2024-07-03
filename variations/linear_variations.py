@@ -5,7 +5,6 @@ import math
 
 from quantization.quantize import _fake_quantize, quantize_dictionary
 
-
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
     Source: https://huggingface.co/1bitLLM/bitnet_b1_58-large/blob/main/utils_quant.py
