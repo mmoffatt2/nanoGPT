@@ -122,15 +122,20 @@ class CausalSelfAttention(nn.Module):
             self.c_proj = self.linear_variant(config.n_embd, config.n_embd, config=config)
 
         # quantization
-        self.quantization_bits = config.quantization_bits
+        self.quantization_linear_bits = config.quantization_linear_bits
         self.quantize_attn_all = config.quantize_attn_all
         self.quantization_linear_method = config.quantization_linear_method
         self.quantize_q = config.quantize_q
+        self.quantization_q_bits = config.quantization_q_bits
         self.quantize_k = config.quantize_k
+        self.quantization_k_bits = config.quantization_k_bits
         self.quantize_v = config.quantize_v
+        self.quantization_v_bits = config.quantization_v_bits
         self.quantize_q_k_mult = config.quantize_q_k_mult
         self.quantize_softmax_v_mult = config.quantize_softmax_v_mult
+        self.quantization_mult_bits = config.quantization_mult_bits
         self.quantize_softmax = config.quantize_softmax
+        self.quantization_softmax_bits = config.quantization_softmax_bits
 
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
@@ -236,9 +241,9 @@ class CausalSelfAttention(nn.Module):
         v = v.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
 
         if self.quantize_q or self.quantize_attn_all:
-            q = quantize_helper(self.training, q, self.quantization_bits, self.quantization_linear_method)
+            q = quantize_helper(self.training, q, self.quantization_q_bits, self.quantization_linear_method)
         if self.quantize_k or self.quantize_attn_all:
-            k = quantize_helper(self.training, k, self.quantization_bits, self.quantization_linear_method)
+            k = quantize_helper(self.training, k, self.quantization_k_bits, self.quantization_linear_method)
 
         y = None
         # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
@@ -255,7 +260,7 @@ class CausalSelfAttention(nn.Module):
               att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
 
             if self.quantize_q_k_mult or self.quantize_attn_all:
-                att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
+                att = quantize_helper(self.training, att, self.quantization_mult_bits, self.quantization_linear_method)
 
             # apply masks
             if self.window_size is not None:
@@ -280,9 +285,9 @@ class CausalSelfAttention(nn.Module):
 
             # quantize att and v
             if self.quantize_softmax or self.quantize_attn_all:
-                att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
+                att = quantize_helper(self.training, att, self.quantization_softmax_bits, self.quantization_linear_method)
             if self.quantize_v or self.quantize_attn_all:
-                v = quantize_helper(self.training, v, self.quantization_bits, self.quantization_linear_method)
+                v = quantize_helper(self.training, v, self.quantization_v_bits, self.quantization_linear_method)
 
             if self.n_head != self.n_kv_group:
                 v_repeated = v.repeat_interleave(self.n_head // self.n_kv_group, dim=1)
@@ -292,7 +297,7 @@ class CausalSelfAttention(nn.Module):
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
         if self.quantize_softmax_v_mult or self.quantize_attn_all:
-            y = quantize_helper(self.training, y, self.quantization_bits, self.quantization_linear_method)
+            y = quantize_helper(self.training, y, self.quantization_mult_bits, self.quantization_linear_method)
 
         # output projection
         y = self.resid_dropout(self.c_proj(y))
@@ -311,7 +316,8 @@ class MLP(nn.Module):
 
         # Whether the activation is quantized
         self.quantize_activation = config.quantize_activation
-        self.quantization_bits = config.quantization_bits
+        self.quantization_activation_bits = config.quantization_activation_bits
+        self.quantization_linear_bits = config.quantization_linear_bits
         self.quantize_mlp_all = config.quantize_mlp_all
         self.quantization_activation_method = config.quantization_activation_method
 
@@ -342,7 +348,7 @@ class MLP(nn.Module):
             x_in1 = self.c_fc_in1(x)
             x_in1 = self.activation_variant(x_in1)
             if self.quantize_activation or self.quantize_mlp_all:
-                x_in1 = quantize_helper(self.training, x_in1, self.quantization_bits, self.quantization_activation_method)
+                x_in1 = quantize_helper(self.training, x_in1, self.quantization_activation_bits, self.quantization_activation_method)
             x_in2 = self.c_fc_in2(x)
             x_out = x_in1 * x_in2
             x = self.c_fc_out(x_out)
@@ -350,7 +356,7 @@ class MLP(nn.Module):
             x = self.c_fc(x)
             x = self.activation_variant(x)
             if self.quantize_activation or self.quantize_mlp_all:
-                x = quantize_helper(self.training, x, self.quantization_bits, self.quantization_activation_method)
+                x = quantize_helper(self.training, x, self.quantization_activation_bits, self.quantization_activation_method)
             x = self.c_proj(x)
         x = self.dropout(x)
         return x

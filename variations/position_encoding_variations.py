@@ -8,7 +8,7 @@ from quantization.quantize import dequantize, quantize_dictionary
 class QuantizedEmbedding(nn.Embedding):
     def __init__(self, embd_size, embd_dim, config):
         super().__init__(embd_size, embd_dim)
-        self.quantization_bits = config.quantization_bits
+        self.quantization_bits = config.quantization_embedding_bits
         self.embedding_method = config.quantization_embedding_method
 
     def forward(self, x):

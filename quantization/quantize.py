@@ -15,7 +15,13 @@ def affine_quantize(tensor, bits):
     scale = (max - min) / (1 << bits - 1)
     zero_point = -torch.round(min * scale) + bit_min
     xi_array = torch.round(tensor / scale) + zero_point
-    return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=torch.int8)
+    if bits > 16:
+        dtype = torch.int32
+    if bits > 8:
+        dtype = torch.int16
+    else:
+        dtype = torch.int8
+    return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=dtype)
 
 def stochastic_quantize(tensor, bits):
     """
