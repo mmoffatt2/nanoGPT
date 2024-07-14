@@ -272,15 +272,19 @@ class CausalSelfAttention(nn.Module):
 
             # softmax variation
             if self.softmax_variant_attn != 'softmax':
+                if self.quantize_softmax or self.quantize_attn_all:
+                    zero_point, quantized_norm, att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
                 att = self.softmax_layer_attn(att)
             else:
+                if self.quantize_softmax or self.quantize_attn_all:
+                    zero_point, quantized_norm, att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
                 att = F.softmax(att, dim=-1)
             
             att = self.attn_dropout(att)
 
             # quantize att and v
             if self.quantize_softmax or self.quantize_attn_all:
-                att = quantize_helper(self.training, att, self.quantization_bits, self.quantization_linear_method)
+                att = (att - zero_point) * quantized_norm
             if self.quantize_v or self.quantize_attn_all:
                 v = quantize_helper(self.training, v, self.quantization_bits, self.quantization_linear_method)
 
