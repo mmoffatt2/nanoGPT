@@ -12,8 +12,8 @@ def affine_quantize(tensor, bits):
     bit_min = -bit_max - 1
     max = tensor.max()
     min = tensor.min()
-    scale = (max - min) / (1 << bits - 1)
-    zero_point = -torch.round(min * scale) + bit_min
+    scale = (max - min) / ((1 << bits) - 1)
+    zero_point = -torch.round(min / scale) + bit_min
     xi_array = torch.round(tensor / scale) + zero_point
     return zero_point, scale, torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=torch.int8)
 
