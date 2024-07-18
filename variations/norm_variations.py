@@ -21,12 +21,16 @@ class RMSNorm(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        self.inputs = []
+        self.outputs = []
         ndim = config.n_embd
         self.gain = nn.Parameter(torch.ones(ndim))
 
     def forward(self, x):
+        self.inputs = x
         rms = x.norm(2, dim=-1, keepdim=True) / math.sqrt(x.size(-1))
-        return x / rms * self.gain
+        self.outputs = x / rms * self.gain
+        return self.outputs
 
 class pRMSNorm(nn.Module):
     """Partial RMS Normalization"""
@@ -90,12 +94,16 @@ class kRMSNorm(nn.Module):
     def forward(self, x):
         # Calculate the number of elements to use for kRMS
         k = min(x.size(-1), self.k)
+        print(x.shape)
+        print(x)
 
         # Select elements based on the selection type
         if self.selection_type == 'first':
             x_part = x[..., :k]
+            print(x_part.shape)
         elif self.selection_type == 'last':
             x_part = x[..., -k:]
+            print(x_part.shape)
         elif self.selection_type == 'random':
             indices = torch.randperm(x.size(-1))[:k]
             x_part = x[..., indices]
