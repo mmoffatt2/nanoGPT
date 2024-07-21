@@ -227,7 +227,7 @@ class QuantizedLinear(nn.Linear):
         super().__init__(in_features, out_features, config.bias)
 
         self.config = config
-        self.weight_bits = config.quantization_bits
+        self.weight_bits = config.quantization_linear_bits
 
         if self.weight_bits < 1:
             raise ValueError(f"weight_bits={self.weight_bits} must be higher than 0 ")
