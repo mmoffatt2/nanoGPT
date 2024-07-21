@@ -116,11 +116,11 @@ def parse_args():
             "ternarized_linear"
         ],
     )
-    model_group.add_argument("--quantization_linear_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for linear quantization")
+    model_group.add_argument("--quantization_linear_method", type=str, default="affine_quant", choices=["linear_quant", "affine_quant", "stochastic_quant"], help="function used for linear quantization")
     model_group.add_argument("--quantization_linear_bits", type=int, default=8, help="number of bits for linear quantization")
     model_group.add_argument("--quantize_wte", default=None, action=argparse.BooleanOptionalAction, help="Whether the word embedding is quantized")
     model_group.add_argument("--quantize_wpe", default=None, action=argparse.BooleanOptionalAction, help="Whether the word position embedding is quantized")
-    model_group.add_argument("--quantization_embedding_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for embedding quantization")
+    model_group.add_argument("--quantization_embedding_method", type=str, default="affine_quant", choices=["linear_quant", "affine_quant", "stochastic_quant"], help="function used for embedding quantization")
     model_group.add_argument("--quantization_embedding_bits", type=int, default=8, help="number of bits for embedding quantization")
     model_group.add_argument("--quantize_attn_all", default=None, action=argparse.BooleanOptionalAction, help="Whether all linear layers in attention use linear variant")
     model_group.add_argument("--quantize_c_attn_q", default=None, action=argparse.BooleanOptionalAction, help="Whether the query linear layer uses linear variant")
@@ -144,7 +144,7 @@ def parse_args():
     model_group.add_argument("--quantize_mlp_down", default=None, action=argparse.BooleanOptionalAction, help="Whether the mlp down layer uses linear variant")
     model_group.add_argument("--quantize_activation", default=None, action=argparse.BooleanOptionalAction, help="Whether the activation output is quantized")
     model_group.add_argument("--quantization_activation_bits", type=int, default=8, help="number of bits for activation quantization")
-    model_group.add_argument("--quantization_activation_method", type=str, default="affine_quant", choices=["affine_quant", "stochastic_quant"], help="function used for activation quantization")
+    model_group.add_argument("--quantization_activation_method", type=str, default="affine_quant", choices=["linear_quant", "affine_quant", "stochastic_quant"], help="function used for activation quantization")
 
     # POSITIONAL EMBEDDING VARIATIONS
     model_group.add_argument('--use_rotary_embeddings', default=False, action=argparse.BooleanOptionalAction)

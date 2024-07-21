@@ -87,7 +87,7 @@ def quantize_helper(training, tensor, num_bits, quantization_linear_method):
         return _fake_quantize(tensor, num_bits)
     else:
         zero_point, quantized_norm, quantized_matrix = quantize_dictionary[quantization_linear_method](tensor, num_bits)
-        return dequantize(zero_point, quantized_norm, quantized_matrix)
+        return dequantize(zero_point, quantized_norm, quantized_matrix, quantization_linear_method, num_bits)
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, fire_pos_enc=None):

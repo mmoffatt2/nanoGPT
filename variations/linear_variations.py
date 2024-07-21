@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import math
 
-from quantization.quantize import _fake_quantize, quantize_dictionary
+from quantization.quantize import _fake_quantize, quantize_dictionary, dequantize
 
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
@@ -264,11 +264,11 @@ class QuantizedLinear(nn.Linear):
         assert not self.training, "Should be called only during inference"
 
         # Compute the dequantized weight
-        weight = (self.quantized_weight - self.weight_zero_point[0]) * self.weight_norm
+        weight = dequantize(self.weight_zero_point[0], self.weight_norm, self.quantized_weight, self.config.quantization_linear_method, self.weight_bits)
 
         # Compute the dequantized bias
         if self.bias is not None:
-            bias = (self.quantized_bias - self.bias_zero_point[0]) * self.bias_norm
+            bias = dequantize(self.bias_zero_point[0], self.bias_norm, self.quantized_bias, self.config.quantization_linear_method, self.accumulation_bits)
 
         # Uses the dequantized weights and bias to compute the output using F.linear
         if self.bias:
