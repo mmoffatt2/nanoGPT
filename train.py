@@ -19,7 +19,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.tensorboard import SummaryWriter
 
 from model import GPT, GPTConfig
-from statistics_util.statistic_plots import graph_RMS, create_box_plot, plot_statistics
+from statistics_util.statistic_plots import create_box_plot, plot_statistics
+from statistics_util.rms_plots import graph_RMS, graph_gain
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -725,10 +726,50 @@ class Trainer:
                     sys.exit("Exiting training loss is NaN")
                 self.log_metrics_non_validation(lossf, running_mfu, self.iter_num)
 
+            if self.args.statistic_for == "norm":
+                timestamp = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
+                norm_names = ['ln_1', 'ln_2', 'ln_f']
+                if self.args.RMSNorm_statistic == "gain" or self.args.RMSNorm_statistic == "all":
+                    gain_ln_1_values = ([[] for _ in range(self.args.n_layer)])
+                    gain_ln_2_values = ([[] for _ in range(self.args.n_layer)])
+                    gain_ln_f_values = []
 
+                    gain_ln_f_values.append(torch.mean(eval(f"self.model.transformer.ln_f.gain").to('cpu').to(torch.float32)))
+                    for layer in range(self.args.n_layer):
+                        print(gain_ln_1_values)
+                        print(layer)
+                        gain_ln_1_values[layer].append(torch.mean(eval(f"self.model.transformer.h[{layer}].ln_1.gain").to('cpu').to(torch.float32)))
+                        gain_ln_2_values[layer].append(torch.mean(eval(f"self.model.transformer.h[{layer}].ln_2.gain").to('cpu').to(torch.float32)))
+                
+                if (self.args.RMSNorm_statistic == "RMS" or self.args.RMSNorm_statistic == "all") and self.iter_num % self.args.RMSNorm_plot_interval == 0 and self.iter_num != 0:
+                    for name in norm_names:
+                        if name == 'ln_f':
+                            RMSNorm_input_data = eval(f"self.model.transformer.{name}.inputs").to('cpu').to(torch.float32)
+                            graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num)
+                        else:
+                            for layer in range (self.args.n_layer):
+                                RMS_input_location = f"transformer.h[{layer}].{name}.inputs"
+                                RMSNorm_input_data = eval(f"self.model.{RMS_input_location}").to('cpu').to(torch.float32)
+                                graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, layer)
+            
+                if (self.args.RMSNorm_statistic == "gain" or self.args.RMSNorm_statistic == "all") and self.iter_num == self.args.max_iters:
+                    graph_gain(self.args.out_dir, gain_ln_1_values, "ln_1", self.args.max_iters, timestamp)
+                    graph_gain(self.args.out_dir, gain_ln_2_values, "ln_2", self.args.max_iters, timestamp)
+                    graph_gain(self.args.out_dir, gain_ln_f_values, "ln_f", self.args.max_iters, timestamp)
+                    # RMS_input_location = f"transformer.h[{layer}].ln_1.inputs"
+                    # RMSNorm_input_data = eval(f"self.model.{RMS_input_location}").to('cpu').to(torch.float32)
+                    # RMSNorm_gain_data = eval(f"self.model.transformer.h[{layer}].ln_1.gain").to('cpu').to(torch.float32)
+                    # RMSNorm_input_data = RMSNorm_input_data.detach().numpy()
+                    # RMSNorm_gain_data = RMSNorm_gain_data.detach().numpy()
+                    # np.save("RMS_input", RMSNorm_input_data)
+                    # np.save("RMS_gain", RMSNorm_gain_data)
 
-            if (self.args.statistic_for == "softmax" and self.args.softmax_variant_attn in ['consmax', 'polymax', 'strongermax']) \
-                or self.args.statistic_for == "norm":
+                    # RMSNorm_input_data = np.load("RMS_input.npy")
+                    # RMSNorm_gain_data = np.load("RMS_gain.npy")
+                    # print("RMSNorm_input_data:", RMSNorm_input_data)
+                    # print("RMSNorm_gain_data:", RMSNorm_gain_data)
+
+            if self.args.statistic_for == "softmax" and self.args.softmax_variant_attn in ['consmax', 'polymax', 'strongermax']:
                 betas = []
                 gammas = []
                 i_sum_vals = []
@@ -747,13 +788,6 @@ class Trainer:
 
                 box_plot_input_data = []
                 box_plot_output_data = []
-
-                if self.iter_num % self.args.RMSNorm_plot_interval == 0 and self.iter_num != 0:
-                    timestamp = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
-                    for layer in range (self.args.n_layer):
-                        RMS_input_location = f"transformer.h[{layer}].ln_1.inputs"
-                        RMSNorm_input_data = eval(f"self.model.{RMS_input_location}").to('cpu').to(torch.float32)
-                        graph_RMS(self.args.out_dir, RMSNorm_input_data, "ln_1", timestamp, self.iter_num, layer)
 
 
                 for layer in range (self.args.n_layer):

@@ -58,6 +58,8 @@ class kRMSNorm(nn.Module):
 
     def __init__(self, config):
         super().__init__()
+        self.inputs = []
+        self.outputs = []
         ndim = config.n_embd
         self.gain = nn.Parameter(torch.ones(ndim)) if config.krmsnorm_enable_gain else None
         self.k = config.krmsnorm_num
@@ -92,18 +94,15 @@ class kRMSNorm(nn.Module):
         return x
 
     def forward(self, x):
+        self.inputs = x
         # Calculate the number of elements to use for kRMS
         k = min(x.size(-1), self.k)
-        print(x.shape)
-        print(x)
 
         # Select elements based on the selection type
         if self.selection_type == 'first':
             x_part = x[..., :k]
-            print(x_part.shape)
         elif self.selection_type == 'last':
             x_part = x[..., -k:]
-            print(x_part.shape)
         elif self.selection_type == 'random':
             indices = torch.randperm(x.size(-1))[:k]
             x_part = x[..., indices]
@@ -126,7 +125,8 @@ class kRMSNorm(nn.Module):
         if self.enable_gain:
             x = x * self.gain
 
-        return x
+        self.output = x
+        return self.output
 
 
 

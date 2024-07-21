@@ -2,39 +2,7 @@ import os
 import time
 import matplotlib.pyplot as plt
 import numpy as np
-import math
 import plotly.graph_objects as go
-
-def calculate_RMS(x):
-    RMS_values = []
-    for i in range(1, (x.shape)[-1]):
-        x_part = x[..., :i]
-        rms = x_part.float().norm(2, dim=-1, keepdim=True) / math.sqrt(i)
-        print(rms.shape)
-        RMS_values.append(rms)
-    return RMS_values
-
-def graph_RMS(out_dir, tensor, ln_name, timestamp, num_iters, layer):
-    directory_path = os.path.join(out_dir, 'images')
-    os.makedirs(directory_path, exist_ok=True)  
-
-    RMS_values = calculate_RMS(tensor)
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=list(range(len(RMS_values))),
-        y=RMS_values,
-        mode='lines'
-    ))
-
-    # add titles and legend to Plotly
-    fig.update_layout(
-        title=f'RMSNorm of {ln_name} in Layer {layer} after {num_iters} Iterations of Training',
-        xaxis_title='first k number of elements',
-        yaxis_title=f'RMS value',
-        height=890,
-        width=1200
-    )
-    fig.write_image(f'{directory_path}/{layer}_{ln_name}_{num_iters}_changes_plotly_{timestamp}.png')    
 
 def create_box_plot(out_dir, plot_data, y_labels, timestamp, data_type, stat_type):
     directory_path = os.path.join(out_dir, 'images')
