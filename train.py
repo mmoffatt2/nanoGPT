@@ -103,7 +103,23 @@ def parse_args():
 
     # LINEAR VARIATIONS
     model_group.add_argument(
-        "--linear_variant",
+        "--attn_linear_variant",
+        type=str,
+        default="linear",
+        choices=[
+            "linear",
+            "bitlinear",
+            "bitlinear_1p58",
+            "bitlinear_optimized",
+            "quantized_linear",
+            "binarized_linear",
+            "ternarized_linear"
+        ],
+    )
+
+    # LINEAR VARIATIONS
+    model_group.add_argument(
+        "--mlp_linear_variant",
         type=str,
         default="linear",
         choices=[

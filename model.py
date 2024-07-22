@@ -94,9 +94,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
 
-        self.linear_variant = linear_dictionary[config.linear_variant]
+        self.linear_variant = linear_dictionary[config.attn_linear_variant]
         # key, query, value projections for all heads, but in a batch
-        if config.linear_variant != "linear" and (config.quantize_c_attn_q or config.quantize_attn_all):
+        if self.linear_variant != "linear" and (config.quantize_c_attn_q or config.quantize_attn_all):
             self.c_attn_q = self.linear_variant(config.n_embd, config.n_embd, config=config)
         else:
             self.c_attn_q = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
@@ -114,11 +114,11 @@ class CausalSelfAttention(nn.Module):
         self.c_attn_v = nn.Linear(config.n_embd, self.kv_dim, bias=config.bias)
         # output projection
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        if config.linear_variant != "linear" and (config.quantize_c_attn_k or config.quantize_attn_all):
+        if self.linear_variant != "linear" and (config.quantize_c_attn_k or config.quantize_attn_all):
             self.c_attn_k = self.linear_variant(config.n_embd, self.kv_dim, config=config)
-        if config.linear_variant != "linear" and (config.quantize_c_attn_v or config.quantize_attn_all):
+        if self.linear_variant != "linear" and (config.quantize_c_attn_v or config.quantize_attn_all):
             self.c_attn_v = self.linear_variant(config.n_embd, self.kv_dim, config=config)
-        if config.linear_variant != "linear" and (config.quantize_attn_proj or config.quantize_attn_all):
+        if self.linear_variant != "linear" and (config.quantize_attn_proj or config.quantize_attn_all):
             self.c_proj = self.linear_variant(config.n_embd, config.n_embd, config=config)
 
         # quantization
@@ -309,7 +309,7 @@ class MLP(nn.Module):
         super().__init__()
 
         # Select linear variant
-        self.linear_variant = linear_dictionary[config.linear_variant]
+        self.linear_variant = linear_dictionary[config.mlp_linear_variant]
 
         # Select activation variant
         self.activation_variant = activation_dictionary[config.activation_variant]
@@ -328,17 +328,17 @@ class MLP(nn.Module):
             self.c_fc_in1 = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
             self.c_fc_in2 = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
             self.c_fc_out = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-            if config.linear_variant != "linear" and (config.quantize_mlp_up or config.quantize_mlp_all):
+            if self.linear_variant != "linear" and (config.quantize_mlp_up or config.quantize_mlp_all):
                 self.c_fc_in1 = self.linear_variant(config.n_embd, 4 * config.n_embd, config=config)
                 self.c_fc_in2 = self.linear_variant(config.n_embd, 4 * config.n_embd, config=config)
-            if config.linear_variant != "linear" and (config.quantize_mlp_down or config.quantize_mlp_all):
+            if self.linear_variant != "linear" and (config.quantize_mlp_down or config.quantize_mlp_all):
                 self.c_fc_out = self.linear_variant(4 * config.n_embd, config.n_embd, config=config)
         else:
             self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
             self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-            if config.linear_variant != "linear" and (config.quantize_mlp_up or config.quantize_mlp_all):
+            if self.linear_variant != "linear" and (config.quantize_mlp_up or config.quantize_mlp_all):
                 self.c_fc = self.linear_variant(config.n_embd, 4 * config.n_embd, config=config)
-            if config.linear_variant != "linear" and (config.quantize_mlp_down or config.quantize_mlp_all):
+            if self.linear_variant != "linear" and (config.quantize_mlp_down or config.quantize_mlp_all):
                 self.c_proj = self.linear_variant(4 * config.n_embd, config.n_embd, config=config)
 
         self.dropout = nn.Dropout(config.dropout)

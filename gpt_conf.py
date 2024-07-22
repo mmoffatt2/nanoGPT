@@ -130,4 +130,5 @@ class GPTConfig:
     activation_variant: str = "gelu"
 
     # Linear Alternatives
-    linear_variant: str = "linear"
+    attn_linear_variant: str = "linear"
+    mlp_linear_variant: str = "linear"
