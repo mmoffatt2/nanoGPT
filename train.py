@@ -317,6 +317,20 @@ def initialize_statistics(num_layers, num_heads):
 
         return stats
 
+def initialize_RMS_statistics(num_layers):
+    stats = {
+        "mean_gain_ln_1": [[] for _ in range(num_layers)],
+        "max_gain_ln_1": [[] for _ in range(num_layers)],
+        "min_gain_ln_1": [[] for _ in range(num_layers)],
+        "mean_gain_ln_2": [[] for _ in range(num_layers)],
+        "max_gain_ln_2": [[] for _ in range(num_layers)],
+        "min_gain_ln_2": [[] for _ in range(num_layers)],
+        "mean_gain_ln_f": [],
+        "max_gain_ln_f": [],
+        "min_gain_ln_f": []
+    }
+    return stats
+
 
 class Trainer:
 
@@ -332,6 +346,7 @@ class Trainer:
 
         self.setup()
         self.stats = initialize_statistics(self.args.n_layer, self.args.n_head)
+        self.RMS_stats = initialize_RMS_statistics(self.args.n_layer)
 
     def setup(self):
         # Setup DDP
@@ -730,32 +745,36 @@ class Trainer:
                 timestamp = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
                 norm_names = ['ln_1', 'ln_2', 'ln_f']
                 if self.args.RMSNorm_statistic == "gain" or self.args.RMSNorm_statistic == "all":
-                    gain_ln_1_values = ([[] for _ in range(self.args.n_layer)])
-                    gain_ln_2_values = ([[] for _ in range(self.args.n_layer)])
-                    gain_ln_f_values = []
-
-                    gain_ln_f_values.append(torch.mean(eval(f"self.model.transformer.ln_f.gain").to('cpu').to(torch.float32)))
-                    for layer in range(self.args.n_layer):
-                        print(gain_ln_1_values)
-                        print(layer)
-                        gain_ln_1_values[layer].append(torch.mean(eval(f"self.model.transformer.h[{layer}].ln_1.gain").to('cpu').to(torch.float32)))
-                        gain_ln_2_values[layer].append(torch.mean(eval(f"self.model.transformer.h[{layer}].ln_2.gain").to('cpu').to(torch.float32)))
+                    ln_f_gain_input_data = eval(f"self.model.transformer.ln_f.gain").to('cpu').to(torch.float32)
+                    self.RMS_stats["mean_gain_ln_f"].append(torch.mean(ln_f_gain_input_data).detach().numpy())
+                    self.RMS_stats["min_gain_ln_f"].append(torch.min(ln_f_gain_input_data).detach().numpy())
+                    self.RMS_stats["max_gain_ln_f"].append(torch.max(ln_f_gain_input_data).detach().numpy())
+                    for name in ['ln_1', 'ln_2']:
+                        for layer in range(self.args.n_layer):
+                            gain_input_data = eval(f"self.model.transformer.h[{layer}].{name}.gain").to('cpu').to(torch.float32)
+                            self.RMS_stats[f"mean_gain_{name}"][layer].append(torch.mean(gain_input_data).detach().numpy())
+                            self.RMS_stats[f"min_gain_{name}"][layer].append(torch.min(gain_input_data).detach().numpy())
+                            self.RMS_stats[f"max_gain_{name}"][layer].append(torch.max(gain_input_data).detach().numpy())
                 
                 if (self.args.RMSNorm_statistic == "RMS" or self.args.RMSNorm_statistic == "all") and self.iter_num % self.args.RMSNorm_plot_interval == 0 and self.iter_num != 0:
                     for name in norm_names:
                         if name == 'ln_f':
                             RMSNorm_input_data = eval(f"self.model.transformer.{name}.inputs").to('cpu').to(torch.float32)
-                            graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num)
+                            if self.args.norm_variant_output == "krmsnorm":
+                                graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, krmsnorm_num=self.args.krmsnorm_num)
+                            else:
+                                graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num)
                         else:
                             for layer in range (self.args.n_layer):
                                 RMS_input_location = f"transformer.h[{layer}].{name}.inputs"
                                 RMSNorm_input_data = eval(f"self.model.{RMS_input_location}").to('cpu').to(torch.float32)
-                                graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, layer)
+                                if self.args.norm_variant_attn == "krmsnorm":
+                                    graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, layer, self.args.krmsnorm_num)
+                                else:
+                                    graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, layer)
             
                 if (self.args.RMSNorm_statistic == "gain" or self.args.RMSNorm_statistic == "all") and self.iter_num == self.args.max_iters:
-                    graph_gain(self.args.out_dir, gain_ln_1_values, "ln_1", self.args.max_iters, timestamp)
-                    graph_gain(self.args.out_dir, gain_ln_2_values, "ln_2", self.args.max_iters, timestamp)
-                    graph_gain(self.args.out_dir, gain_ln_f_values, "ln_f", self.args.max_iters, timestamp)
+                    graph_gain(self.args.out_dir, self.RMS_stats, self.args.max_iters, self.args.n_layer, timestamp)
                     # RMS_input_location = f"transformer.h[{layer}].ln_1.inputs"
                     # RMSNorm_input_data = eval(f"self.model.{RMS_input_location}").to('cpu').to(torch.float32)
                     # RMSNorm_gain_data = eval(f"self.model.transformer.h[{layer}].ln_1.gain").to('cpu').to(torch.float32)
