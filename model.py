@@ -29,7 +29,7 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
-from quantization.quantize import _fake_quantize
+from quantization.quantize import _fake_quantize, quantize_dictionary, dequantize
 
 def create_shared_param_group(layer_type, config):
 
@@ -90,6 +90,10 @@ def create_shared_param_group(layer_type, config):
                     return shared_group
     return shared_group
 
+def fake_quantize_act(tensor, num_bits, quant_method):
+    zero_point, scale, act = quantize_dictionary[quant_method](tensor, num_bits)
+    return act, scale, zero_point, dequantize(zero_point, scale, act)
+
 def set_variant(variant, default_variant):
     if variant == None:
         return default_variant
@@ -112,6 +116,26 @@ class CausalSelfAttention(nn.Module):
                 self.quantization_attn_dict[arg] = set_variant(val, config.quantize_attn_act_bits)
             elif arg.startswith("quantize_") and "attn_act" in arg:
                 self.quantization_attn_dict[arg] = set_variant(val, config.quantize_attn_act)
+                if arg != "quantize_attn_act" and self.quantization_attn_dict[arg]:
+                    arg_str = arg.split("quantize_")[1]
+                    if arg_str == "attn_act_qk_mult_inputs":
+                        self.register_buffer(f"{arg_str}_q", None)
+                        self.register_buffer(f"{arg_str}_q_scale", None)
+                        self.register_buffer(f"{arg_str}_q_zero_point", None)
+                        self.register_buffer(f"{arg_str}_k", None)
+                        self.register_buffer(f"{arg_str}_k_scale", None)
+                        self.register_buffer(f"{arg_str}_k_zero_point", None)
+                    elif arg_str == "attn_act_pv_mult_inputs":
+                        self.register_buffer(f"{arg_str}_softmax", None)
+                        self.register_buffer(f"{arg_str}_softmax_scale", None)
+                        self.register_buffer(f"{arg_str}_softmax_zero_point", None)
+                        self.register_buffer(f"{arg_str}_v", None)
+                        self.register_buffer(f"{arg_str}_v_scale", None)
+                        self.register_buffer(f"{arg_str}_v_zero_point", None)
+                    else:
+                        self.register_buffer(arg_str, None)
+                        self.register_buffer(f"{arg_str}_scale", None)
+                        self.register_buffer(f"{arg_str}_zero_point", None)
         self.linear_variant_q = linear_dictionary[set_variant(config.linear_variant_q, config.linear_variant_attn)]
         self.linear_variant_k = linear_dictionary[set_variant(config.linear_variant_k, config.linear_variant_attn)]
         self.linear_variant_v = linear_dictionary[set_variant(config.linear_variant_v, config.linear_variant_attn)]
@@ -206,7 +230,9 @@ class CausalSelfAttention(nn.Module):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         if self.quantization_attn_dict["quantize_attn_act_input"]:
-            x = _fake_quantize(x, self.quantization_attn_dict["quantize_attn_act_input_bits"], self.quantization_attn_dict["activations_quant_method"])
+            num_bits = self.quantization_attn_dict["quantize_attn_act_input_bits"]
+            quant_method = self.quantization_attn_dict["activations_quant_method"]
+            self.attn_act_input, self.attn_act_input_scale, self.attn_act_input_zero_point, x = fake_quantize_act(x, num_bits, quant_method)
 
         q = self.c_attn_q(x)
         k = self.c_attn_k(x)
@@ -251,8 +277,10 @@ class CausalSelfAttention(nn.Module):
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
         else:
             if self.quantization_attn_dict["quantize_attn_act_qk_mult_inputs"]:
-                q = _fake_quantize(q, self.quantization_attn_dict["quantize_attn_act_qk_mult_inputs_bits"], self.quantization_attn_dict["activations_quant_method"])
-                k = _fake_quantize(k, self.quantization_attn_dict["quantize_attn_act_qk_mult_inputs_bits"], self.quantization_attn_dict["activations_quant_method"])
+                num_bits = self.quantization_attn_dict["quantize_attn_act_qk_mult_inputs_bits"]
+                quant_method = self.quantization_attn_dict["activations_quant_method"]
+                self.attn_act_qk_mult_inputs_q, self.attn_act_qk_mult_inputs_q_scale, self.attn_act_qk_mult_inputs_q_zero_point, q = fake_quantize_act(q, num_bits, quant_method)
+                self.attn_act_qk_mult_inputs_k, self.attn_act_qk_mult_inputs_k_scale, self.attn_act_qk_mult_inputs_k_zero_point, k = fake_quantize_act(k, num_bits, quant_method)
 
             att = None
             # manual implementation of attention
@@ -277,7 +305,9 @@ class CausalSelfAttention(nn.Module):
                 att = att + self.fire_pos_enc(x)
 
             if self.quantization_attn_dict["quantize_attn_act_softmax_input"]:
-                att = _fake_quantize(att, self.quantization_attn_dict["quantize_attn_act_softmax_input_bits"], self.quantization_attn_dict["activations_quant_method"])
+                num_bits = self.quantization_attn_dict["quantize_attn_act_softmax_input_bits"]
+                quant_method = self.quantization_attn_dict["activations_quant_method"]
+                self.attn_act_softmax_input, self.attn_act_softmax_input_scale, self.attn_act_softmax_input_zero_point, att = fake_quantize_act(att, num_bits, quant_method)
 
             # softmax variation
             if self.softmax_variant_attn != 'softmax':
@@ -288,8 +318,10 @@ class CausalSelfAttention(nn.Module):
             att = self.attn_dropout(att)
 
             if self.quantization_attn_dict["quantize_attn_act_pv_mult_inputs"]:
-                att = _fake_quantize(att, self.quantization_attn_dict["quantize_attn_act_pv_mult_inputs_bits"], self.quantization_attn_dict["activations_quant_method"])
-                v = _fake_quantize(v, self.quantization_attn_dict["quantize_attn_act_pv_mult_inputs_bits"], self.quantization_attn_dict["activations_quant_method"])
+                num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_inputs_bits"]
+                quant_method = self.quantization_attn_dict["activations_quant_method"]
+                self.attn_act_pv_mult_inputs_softmax, self.attn_act_pv_mult_inputs_softmax_scale, self.attn_act_pv_mult_inputs_softmax_zero_point, att = fake_quantize_act(att, num_bits, quant_method)
+                self.attn_act_pv_mult_inputs_v, self.attn_act_pv_mult_inputs_v_scale, self.attn_act_pv_mult_inputs_v_zero_point, v = fake_quantize_act(v, num_bits, quant_method)
 
             if self.n_head != self.n_kv_group:
                 v_repeated = v.repeat_interleave(self.n_head // self.n_kv_group, dim=1)
@@ -298,7 +330,9 @@ class CausalSelfAttention(nn.Module):
                 y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
 
         if self.quantization_attn_dict["quantize_attn_act_pv_mult_output"]:
-            y = _fake_quantize(y, self.quantization_attn_dict["quantize_attn_act_pv_mult_output_bits"], self.quantization_attn_dict["activations_quant_method"])
+            num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_output_bits"]
+            quant_method = self.quantization_attn_dict["activations_quant_method"]
+            self.attn_act_pv_mult_output, self.attn_act_pv_mult_output_scale, self.attn_act_pv_mult_output_zero_point, y = fake_quantize_act(y, num_bits, quant_method)
 
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
@@ -306,7 +340,9 @@ class CausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
 
         if self.quantization_attn_dict["quantize_attn_act_output"]:
-            y = _fake_quantize(y, self.quantization_attn_dict["quantize_attn_act_output_bits"], self.quantization_attn_dict["activations_quant_method"])
+            num_bits = self.quantization_attn_dict["quantize_attn_act_output_bits"]
+            quant_method = self.quantization_attn_dict["activations_quant_method"]
+            self.attn_act_output, self.attn_act_output_scale, self.attn_act_output_zero_point, y = fake_quantize_act(y, num_bits, quant_method)
 
         return y
 
@@ -327,6 +363,11 @@ class MLP(nn.Module):
                 self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_mlp_act_bits)
             elif arg.startswith("quantize_") and "mlp_act" in arg:
                 self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_mlp_act)
+                if arg != "quantize_mlp_act" and self.quantization_mlp_dict[arg]:
+                    arg_str = arg.split("quantize_")[1]
+                    self.register_buffer(arg_str, None)
+                    self.register_buffer(f"{arg_str}_scale", None)
+                    self.register_buffer(f"{arg_str}_zero_point", None)
         self.linear_variant_mlp_up = linear_dictionary[set_variant(config.linear_variant_mlp_up, config.linear_variant_mlp)]
         self.linear_variant_mlp_down = linear_dictionary[set_variant(config.linear_variant_mlp_down, config.linear_variant_mlp)]
 
@@ -350,7 +391,9 @@ class MLP(nn.Module):
 
     def forward(self, x):
         if self.quantization_mlp_dict["quantize_mlp_act_input"]:
-            x = _fake_quantize(x, self.quantization_mlp_dict["quantize_mlp_act_input_bits"], self.quantization_mlp_dict["activations_quant_method"])
+            num_bits = self.quantization_mlp_dict["quantize_mlp_act_input_bits"]
+            quant_method = self.quantization_mlp_dict["activations_quant_method"]
+            self.mlp_act_input, self.mlp_act_input_scale, self.mlp_act_input_zero_point, x = fake_quantize_act(x, num_bits, quant_method)
 
         if self.mlp_variant == "kan":
             x = self.kan(x)
@@ -358,24 +401,32 @@ class MLP(nn.Module):
             x = self.c_fc(x)
 
             if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
-                x = _fake_quantize(x, self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"], self.quantization_mlp_dict["activations_quant_method"])
+                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
+                quant_method = self.quantization_mlp_dict["activations_quant_method"]
+                self.mlp_act_activation_input, self.mlp_act_activation_input_scale, self.mlp_act_activation_input_zero_point, x = fake_quantize_act(x, num_bits, quant_method)
 
             x = self.activation_variant(x)
 
             if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
-                x = _fake_quantize(x, self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"], self.quantization_mlp_dict["activations_quant_method"])
+                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
+                quant_method = self.quantization_mlp_dict["activations_quant_method"]
+                self.mlp_act_activation_output, self.mlp_act_activation_output_scale, self.mlp_act_activation_output_zero_point, x = fake_quantize_act(x, num_bits, quant_method)
 
             x = self.c_proj(x)
         elif self.mlp_variant == "swiglu":
             x_in1 = self.c_fc_in1(x)
 
             if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
-                x_in1 = _fake_quantize(x_in1, self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"], self.quantization_mlp_dict["activations_quant_method"])
+                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
+                quant_method = self.quantization_mlp_dict["activations_quant_method"]
+                self.mlp_act_activation_input, self.mlp_act_activation_input_scale, self.mlp_act_activation_input_zero_point, x_in1 = fake_quantize_act(x_in1, num_bits, quant_method)
 
             x_in1 = self.activation_variant(x_in1)
 
             if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
-                x_in1 = _fake_quantize(x_in1, self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"], self.quantization_mlp_dict["activations_quant_method"])
+                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
+                quant_method = self.quantization_mlp_dict["activations_quant_method"]
+                self.mlp_act_activation_output, self.mlp_act_activation_output_scale, self.mlp_act_activation_output_zero_point, x_in1 = fake_quantize_act(x_in1, num_bits, quant_method)
 
             x_in2 = self.c_fc_in2(x)
             x_out = x_in1 * x_in2
@@ -383,7 +434,9 @@ class MLP(nn.Module):
 
         x = self.dropout(x)
         if self.quantization_mlp_dict["quantize_mlp_act_output"]:
-            x = _fake_quantize(x, self.quantization_mlp_dict["quantize_mlp_act_output_bits"], self.quantization_mlp_dict["activations_quant_method"])
+            num_bits = self.quantization_mlp_dict["quantize_mlp_act_output_bits"]
+            quant_method = self.quantization_mlp_dict["activations_quant_method"]
+            self.mlp_act_output, self.mlp_act_output_scale, self.mlp_act_output_zero_point, x = fake_quantize_act(x, num_bits, quant_method)
         return x
 
 
