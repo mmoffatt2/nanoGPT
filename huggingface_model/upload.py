@@ -1,8 +1,8 @@
-from transformers import AutoTokenizer, AutoConfig, AutoModel
+from transformers import GPT2Tokenizer, GPT2Config, GPT2LMHeadModel
 
-config = AutoConfig.from_pretrained("gpt2-custom")
+config = GPT2Config.from_pretrained("gpt2-custom")
 config.push_to_hub("custom_gpt2")
-model = AutoModel.from_pretrained("gpt2-custom")
+model = GPT2LMHeadModel.from_pretrained("gpt2-custom")
 model.push_to_hub("custom_gpt2")
-tokenizer = AutoTokenizer.from_pretrained("gpt2-custom")
+tokenizer = GPT2Tokenizer.from_pretrained("gpt2-custom")
 tokenizer.push_to_hub("custom_gpt2")
