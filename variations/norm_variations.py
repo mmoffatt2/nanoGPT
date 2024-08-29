@@ -22,22 +22,29 @@ class RMSNorm(nn.Module):
     def __init__(self, config):
         super().__init__()
         ndim = config.n_embd
+        self.inputs = []
+        self.outputs = []
         self.gain = nn.Parameter(torch.ones(ndim))
 
     def forward(self, x):
+        self.inputs = x
         rms = x.norm(2, dim=-1, keepdim=True) / math.sqrt(x.size(-1))
-        return x / rms * self.gain
+        self.outputs = x / rms * self.gain
+        return self.outputs
 
 class pRMSNorm(nn.Module):
     """Partial RMS Normalization"""
 
     def __init__(self, config):
         super().__init__()
+        self.inputs = []
+        self.outputs = []
         ndim = config.n_embd
         self.gain = nn.Parameter(torch.ones(ndim))
         self.p = config.prmsnorm_pct # percent of elements to use
 
     def forward(self, x):
+        self.inputs = x
         # Calculate the number of elements to use for pRMS
         k = math.ceil(x.size(-1) * self.p)
 
@@ -47,13 +54,16 @@ class pRMSNorm(nn.Module):
         # Calculate pRMS
         prms = x_part.norm(2, dim=-1, keepdim=True) / math.sqrt(k)
 
-        return x / prms * self.gain
+        self.outputs = x / prms * self.gain
+        return self.outputs
 
 class kRMSNorm(nn.Module):
     """First k, Last k, or Random k elements RMS Normalization with optional int8/int16 quantization, no quantization (fp16), and configurable gain"""
 
     def __init__(self, config):
         super().__init__()
+        self.inputs = []
+        self.outputs = []
         ndim = config.n_embd
         self.gain = nn.Parameter(torch.ones(ndim)) if config.krmsnorm_enable_gain else None
         self.k = config.krmsnorm_num
@@ -90,6 +100,7 @@ class kRMSNorm(nn.Module):
         return x
 
     def forward(self, x):
+        self.inputs = x
         # Calculate the number of elements to use for kRMS
         k = min(x.size(-1), self.k)
 
@@ -129,6 +140,7 @@ class kRMSNorm(nn.Module):
         if self.enable_gain:
             x = x * self.gain
 
+        self.outputs = x
         return x
 
 norm_dictionary = {

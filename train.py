@@ -25,6 +25,7 @@ from statistics_util.statistic_plots import (
     plot_statistics,
     create_statistics,
 )
+from statistics_util.rms_plots import graph_RMS
 from variations.model_variations import model_variation_dictionary
 
 from model import GPT, GPTConfig
@@ -399,6 +400,8 @@ def parse_args():
     logging_group.add_argument('--graph_type', choices=[ "heatmap", "plot", "boxplot", "all" ], default='no_graph', help='Select one of the graph types to display, e.g., --graph_type heatmap, or --graph_type plot')
     logging_group.add_argument('--box_plot_interval', default=1000, type=int, help='Instead of using mean/median/stdev statistics, create box plot of all input/output values at certain intervals of iteration')
     logging_group.add_argument('--box_plot_statistic', choices=['input', 'output', 'all'], default='', help='Select input or output statistic to display in boxplot')
+    logging_group.add_argument('--RMSNorm_statistic', choices=['RMS', 'gain', 'all'], default=None, help='Display plot graphs specifically for RMSNorm statistics')
+    logging_group.add_argument('--RMSNorm_plot_interval', default=100, type=int, help='Create plot of RMS statistics at certain intervals of iteration')
 
     # Model Parameter Distribution
     logging_group.add_argument('--print_model_info', default=True, action=argparse.BooleanOptionalAction)
@@ -902,6 +905,38 @@ class Trainer:
                             torch.save(checkpoint, os.path.join(self.args.out_dir, 'ckpt.pt'))
                         sys.exit("Exiting training loss is NaN")
                     self.log_metrics_non_validation(lossf, running_mfu, self.iter_num)
+
+                if self.args.statistic_for == "norm":
+                    timestamp = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
+                    norm_names = ['ln_1', 'ln_2', 'ln_f']
+                    if self.args.RMSNorm_statistic == "gain" or self.args.RMSNorm_statistic == "all":
+                        ln_f_gain_input_data = eval(f"self.model.transformer.ln_f.gain").to('cpu').to(torch.float32)
+                        self.RMS_stats["mean_gain_ln_f"].append(torch.mean(ln_f_gain_input_data).detach().numpy())
+                        self.RMS_stats["min_gain_ln_f"].append(torch.min(ln_f_gain_input_data).detach().numpy())
+                        self.RMS_stats["max_gain_ln_f"].append(torch.max(ln_f_gain_input_data).detach().numpy())
+                        for name in ['ln_1', 'ln_2']:
+                            for layer in range(self.args.n_layer):
+                                gain_input_data = eval(f"self.model.transformer.h[{layer}].{name}.gain").to('cpu').to(torch.float32)
+                                self.RMS_stats[f"mean_gain_{name}"][layer].append(torch.mean(gain_input_data).detach().numpy())
+                                self.RMS_stats[f"min_gain_{name}"][layer].append(torch.min(gain_input_data).detach().numpy())
+                                self.RMS_stats[f"max_gain_{name}"][layer].append(torch.max(gain_input_data).detach().numpy())
+
+                    if (self.args.RMSNorm_statistic == "RMS" or self.args.RMSNorm_statistic == "all") and self.iter_num % self.args.RMSNorm_plot_interval == 0 and self.iter_num != 0:
+                        for name in norm_names:
+                            if name == 'ln_f':
+                                RMSNorm_input_data = eval(f"self.model.transformer.{name}.inputs").to('cpu').to(torch.float32)
+                                if self.args.norm_variant_output == "krmsnorm":
+                                    graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, krmsnorm_num=self.args.krmsnorm_num)
+                                else:
+                                    graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num)
+                            else:
+                                for layer in range (self.args.n_layer):
+                                    RMS_input_location = f"transformer.h[{layer}].{name}.inputs"
+                                    RMSNorm_input_data = eval(f"self.model.{RMS_input_location}").to('cpu').to(torch.float32)
+                                    if self.args.norm_variant_attn == "krmsnorm":
+                                        graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, layer, self.args.krmsnorm_num)
+                                    else:
+                                        graph_RMS(self.args.out_dir, RMSNorm_input_data, name, timestamp, self.iter_num, layer)
 
 
                 if self.args.create_statistics:
