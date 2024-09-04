@@ -58,6 +58,7 @@ def parse_args():
     training_group.add_argument('--out_dir', default='out', type=str)
     training_group.add_argument('--eval_interval', default=250, type=int)
     training_group.add_argument('--log_interval', default=10, type=int)
+    training_group.add_argument('--softmax_IO_interval', default=10, type=int)
     training_group.add_argument('--eval_iters', default=200, type=int)
     training_group.add_argument('--eval_only', default=False, action=argparse.BooleanOptionalAction)
 
@@ -972,7 +973,7 @@ class Trainer:
                     self.log_metrics_non_validation(lossf, running_mfu, self.iter_num)
 
 
-                if self.args.create_statistics:
+                if self.args.create_statistics and local_iter_num % self.args.softmax_IO_interval == 0:
                     create_statistics(self, graph_y_labels)
 
 
