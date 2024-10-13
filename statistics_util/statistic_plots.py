@@ -16,7 +16,19 @@ def initialize_statistics(num_layers, num_heads):
         'o_median': [],
         'o_stdev': [],
         'o_max': [],
-        'o_min': []
+        'o_min': [],
+        "mean_rms_ln_1": [[] for _ in range(num_layers)],
+        "max_rms_ln_1": [[] for _ in range(num_layers)],
+        "min_rms_ln_1": [[] for _ in range(num_layers)],
+        "mean_rms_ln_2": [[] for _ in range(num_layers)],
+        "max_rms_ln_2": [[] for _ in range(num_layers)],
+        "min_rms_ln_2": [[] for _ in range(num_layers)],
+        "mean_rms_ln_f": [],
+        "max_rms_ln_f": [],
+        "min_rms_ln_f": [],
+        "max_exp_sum": [[] for _ in range(num_layers)],
+        "min_exp_sum": [[] for _ in range(num_layers)],
+        "mean_exp_sum": [[] for _ in range(num_layers)]
     }
 
     for _ in range(num_layers):
@@ -154,6 +166,100 @@ def plot_statistics(args, stats, graph_y_labels):
                     plot_data.append(np.array(data))
 
             create_box_plot(args.out_dir, plot_data, graph_y_labels, timestamp, data_type, stat_type)
+
+def plot_recompute_statistics(args, stats):
+    directory_path = os.path.join(args.out_dir, 'images')
+    os.makedirs(directory_path, exist_ok=True)
+    timestamp = time.strftime('%Y-%m-%d_%H-%M-%S', time.localtime())
+    
+    # Create the first figure for RMS Layer Norm Statistics
+    fig = go.Figure()
+
+    # Plot per-layer stats for 'ln_1' and 'ln_2'
+    for ln in ['ln_1', 'ln_2']:
+        for stat_type in ['max']:
+            stat_key = f"{stat_type}_rms_{ln}"
+            for layer_idx in range(args.n_layer):
+                y_values = stats[stat_key][layer_idx]
+                x_values = [i * args.recompute_factor_log_interval for i in range(len(y_values))]
+                fig.add_trace(go.Scatter(
+                    x=x_values,
+                    y=y_values,
+                    mode='lines',
+                    name=f"{stat_type.upper()} {ln.upper()} Layer {layer_idx + 1}"
+                ))
+
+    # Plot stats for 'ln_f'
+    for stat_type in ['max']:
+        stat_key = f"{stat_type}_rms_ln_f"
+        y_values = stats[stat_key]
+        x_values = [i * args.recompute_factor_log_interval for i in range(len(y_values))]
+        fig.add_trace(go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode='lines',
+            name=f"{stat_type.upper()} LN_F"
+        ))
+
+    # Update layout with titles and legend
+    fig.update_layout(
+        title='1/RMS Statistics',
+        xaxis_title='Iterations',
+        yaxis_title='1/RMS Values',
+        legend_title='Statistics'
+    )
+
+    # Save the first figure
+    fig.write_image(f'{directory_path}/rms_statistics_{timestamp}.png')
+    
+    # Create the second figure for EXP_SUM Statistics
+    fig2 = go.Figure()
+
+    # Plot the EXP_SUM stats
+    for stat_type in ['max']:
+        for layer_idx in range(args.n_layer):
+            stat_key = f"{stat_type}_exp_sum"
+            y_values = stats[stat_key][layer_idx]
+            x_values = [i * args.recompute_factor_log_interval for i in range(len(y_values))]
+            fig2.add_trace(go.Scatter(
+                x=x_values,
+                y=y_values,
+                mode='lines',
+                name=f"{stat_type.upper()} EXP_SUM Layer {layer_idx + 1}"
+            ))
+
+    # Update layout with titles and legend
+    fig2.update_layout(
+        title='EXP_SUM Statistics',
+        xaxis_title='Iterations',
+        yaxis_title='EXP_SUM Values',
+        legend_title='Statistics'
+    )
+
+    # Save the second figure
+    fig2.write_image(f'{directory_path}/exp_sum_statistics_{timestamp}.png')
+
+
+def create_recompute_factor_statistics(self):
+    ln_f_rms_data = eval(f"self.model.transformer.ln_f.rms_reciprocal").to('cpu').to(torch.float32)
+    self.stats["mean_rms_ln_f"].append(torch.mean(ln_f_rms_data).detach().numpy())
+    self.stats["min_rms_ln_f"].append(torch.min(ln_f_rms_data).detach().numpy())
+    self.stats["max_rms_ln_f"].append(torch.max(ln_f_rms_data).detach().numpy())
+    for name in ['ln_1', 'ln_2']:
+        for layer in range(self.args.n_layer):
+            rms_input_data = eval(f"self.model.transformer.h[{layer}].{name}.rms_reciprocal").to('cpu').to(torch.float32)
+            self.stats[f"mean_rms_{name}"][layer].append(torch.mean(rms_input_data).detach().numpy())
+            self.stats[f"min_rms_{name}"][layer].append(torch.min(rms_input_data).detach().numpy())
+            self.stats[f"max_rms_{name}"][layer].append(torch.max(rms_input_data).detach().numpy())
+
+    for layer in range(self.args.n_layer):
+        exp_sum_location = f"transformer.h[{layer}].attn.softmax_layer_attn.exp_sum_reciprocal"
+        softmax_exp_sum = eval(f"self.model.{exp_sum_location}").to('cpu').to(torch.float32)
+        self.stats["mean_exp_sum"][layer].append(torch.mean(softmax_exp_sum).detach().numpy())
+        self.stats["min_exp_sum"][layer].append(torch.min(softmax_exp_sum).detach().numpy())
+        self.stats["max_exp_sum"][layer].append(torch.max(softmax_exp_sum).detach().numpy())
+
+
 
 def create_statistics(self, graph_y_labels):
     if self.args.softmax_variant_attn in ['consmax', 'consmax_v2', 'polymax', 'strongermax']:

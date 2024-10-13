@@ -189,6 +189,7 @@ class Strongermax(nn.Module):
         self.div_by_seq_len = config.div_by_seq_len
         self.overflow_recompute = config.strongermax_overflow_recompute
         self.softmax_io_log_interval = config.softmax_io_log_interval
+        self.recompute_factor_log_interval = config.recompute_factor_log_interval
         self.iter_num = 0
 
         if self.overflow_recompute:
@@ -199,6 +200,9 @@ class Strongermax(nn.Module):
         if self.softmax_io_logging:
             self.inputs = []
             self.outputs = []
+        self.recompute_factor_logging = config.recompute_factor_logging
+        if self.recompute_factor_logging:
+            self.exp_sum_reciprocal = 0
 
     def forward(self, x):
         x_adj = None
@@ -221,6 +225,16 @@ class Strongermax(nn.Module):
             x_adj = x
 
         result = torch.pow(self.strength, x_adj)
+
+        # print("self.strength: ", self.strength)
+        # print("x_adj: ", x_adj.shape)
+        # print("result: ", result.shape)
+        # print("result.sum(dim=self.dim, keepdim=True): ", result.sum(dim=self.dim, keepdim=True).shape)
+        # print("1 / result.sum(dim=self.dim, keepdim=True): ", 1 / result.sum(dim=self.dim, keepdim=True))
+        # sys.exit(1)
+
+        if self.training and self.recompute_factor_logging and self.iter_num % self.softmax_io_log_interval == 0:
+            self.exp_sum_reciprocal = result.sum(dim=self.dim, keepdim=True)
 
         if self.sum_to_1:
             result = result / result.sum(dim=self.dim, keepdim=True)

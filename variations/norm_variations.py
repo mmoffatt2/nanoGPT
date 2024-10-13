@@ -23,9 +23,14 @@ class RMSNorm(nn.Module):
         super().__init__()
         ndim = config.n_embd
         self.gain = nn.Parameter(torch.ones(ndim))
+        self.recompute_factor_logging = config.recompute_factor_logging
+        if self.recompute_factor_logging:
+            self.rms_reciprocal = torch.zeros(64, config.block_size, config.n_embd)
 
     def forward(self, x):
         rms = x.norm(2, dim=-1, keepdim=True) / math.sqrt(x.size(-1))
+        if self.training and self.recompute_factor_logging:
+            self.rms_reciprocal = 1 / rms
         return x / rms * self.gain
 
 class pRMSNorm(nn.Module):

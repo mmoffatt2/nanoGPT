@@ -24,6 +24,8 @@ from statistics_util.statistic_plots import (
     initialize_statistics,
     plot_statistics,
     create_statistics,
+    create_recompute_factor_statistics,
+    plot_recompute_statistics
 )
 from variations.model_variations import model_variation_dictionary
 
@@ -404,10 +406,13 @@ def parse_args():
 
     # Module And Parameter Logging and Plots of Summary Statistics
     model_group.add_argument('--softmax_io_logging', default=False, action=argparse.BooleanOptionalAction, help="logs inputs and outputs of supported softmaxes")
+    model_group.add_argument('--recompute_factor_logging', default=False, action=argparse.BooleanOptionalAction, help="logs 1/RMS and 1/sum(exp) values")
     model_group.add_argument('--softmax_io_log_interval', default=1, type=int)
+    model_group.add_argument('--recompute_factor_log_interval', default=1, type=int)
     model_group.add_argument('--consmax_beta_gamma_logging', default=False, action=argparse.BooleanOptionalAction, help="logs beta and gamma")
     logging_group.add_argument('--create_statistics', default=False, action=argparse.BooleanOptionalAction)
     logging_group.add_argument('--plot_statistics', default=False, action=argparse.BooleanOptionalAction)
+    logging_group.add_argument('--plot_recompute_statistics', default=False, action=argparse.BooleanOptionalAction)
 
     # CSV logging
     logging_group.add_argument('--csv_log', default=True, action=argparse.BooleanOptionalAction)
@@ -977,9 +982,11 @@ class Trainer:
                     self.log_metrics_non_validation(lossf, running_mfu, self.iter_num)
 
 
-                if self.args.create_statistics and local_iter_num % self.args.softmax_io_log_interval == 0:
+                if self.args.create_statistics and self.args.softmax_io_logging and local_iter_num % self.args.softmax_io_log_interval == 0:
                     create_statistics(self, graph_y_labels)
 
+                if self.args.create_statistics and self.args.recompute_factor_logging and local_iter_num % self.args.recompute_factor_log_interval == 0:
+                    create_recompute_factor_statistics(self)
 
                 self.iter_num += 1
                 local_iter_num += 1
@@ -1009,6 +1016,9 @@ class Trainer:
 
             if self.args.plot_statistics:
                 plot_statistics(self.args, self.stats, graph_y_labels)
+
+            if self.args.plot_recompute_statistics:
+                plot_recompute_statistics(self.args, self.stats)
 
             if self.args.tensorboard_log:
                 self.writer.flush()
