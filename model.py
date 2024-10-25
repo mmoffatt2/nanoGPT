@@ -109,6 +109,9 @@ def create_activation_buffers(obj, arg):
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, fire_pos_enc=None):
         super().__init__()
+
+        self.evaluation_iter = 0
+
         if (config.n_kv_group == None):
             config.n_kv_group = config.n_head
         else:
@@ -261,6 +264,9 @@ class CausalSelfAttention(nn.Module):
     def forward(self, x):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
+        if not self.training:
+            self.evaluation_iter += 1
+
         if self.quantization_attn_dict["quantize_attn_act_input"]:
             num_bits = self.quantization_attn_dict["quantize_attn_act_input_bits"]
             quant_method = self.quantization_attn_dict["activations_quant_method"]
@@ -389,6 +395,8 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        self.evaluation_iter = 0
+
         # Select "mlp variant"
         self.mlp_variant = config.mlp_variant
 
@@ -433,6 +441,9 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
+        if not self.training:
+            self.evaluation_iter += 1
+
         if self.quantization_mlp_dict["quantize_mlp_act_input"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_input_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
