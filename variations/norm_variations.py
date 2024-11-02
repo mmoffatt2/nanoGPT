@@ -27,6 +27,26 @@ class RMSNorm(nn.Module):
     def forward(self, x):
         rms = x.norm(2, dim=-1, keepdim=True) / math.sqrt(x.size(-1))
         return x / rms * self.gain
+    
+class RMSNormRecompute(nn.Module):
+    """RMS Normalization Recompute"""
+
+    def __init__(self, linear_variant, in_features, out_features, config):
+        super().__init__()
+        ndim = config.n_embd
+        assert ndim == in_features
+        self.gain = nn.Parameter(torch.ones(out_features))
+        self.linear = linear_variant
+
+    def forward(self, x):
+        # Merge the gain parameter into the weight
+        if not hasattr(self.linear, 'weight'):
+            raise ValueError("Linear variant doesn't have a weight parameter")
+        self.linear.weight.data = self.linear.weight * self.gain.view(-1, 1)
+
+        x = self.linear(x)
+        rms = x.norm(2, dim=-1, keepdim=True) / math.sqrt(x.size(-1))
+        return x / rms
 
 class pRMSNorm(nn.Module):
     """Partial RMS Normalization"""
@@ -136,4 +156,5 @@ norm_dictionary = {
     "rmsnorm": RMSNorm,
     "prmsnorm": pRMSNorm,
     "krmsnorm": kRMSNorm,
+    "rmsnorm_recompute": RMSNormRecompute
 }
