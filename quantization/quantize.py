@@ -1,5 +1,11 @@
 import torch
 
+def create_activation_buffers(obj, arg):
+    arg_str = arg.split("quantize_")[1]
+    obj.register_buffer(arg_str, None)
+    obj.register_buffer(f"{arg_str}_scale", None)
+    obj.register_buffer(f"{arg_str}_zero_point", None)
+
 def set_dtype(bits):
     if bits > 16:
         return torch.int32
@@ -28,7 +34,7 @@ def symmetric_quantize(tensor, bits, causal_mask=False):
     scale = abs_max / bit_max
     xi_array = torch.round(tensor / scale)
     clamped_array = torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=set_dtype(bits))
-    return 0, scale, clamped_array
+    return torch.tensor([0], device=tensor.device), scale, clamped_array
 
 def affine_quantize(tensor, bits):
     """
@@ -91,7 +97,7 @@ def stochastic_quantize(tensor, bits):
     sign_xi_array = (sign_array * xi_array).to(dtype=set_dtype(bits))
     norm = norm / s
 
-    return 0, norm, sign_xi_array
+    return torch.tensor([0], device=tensor.device), norm, sign_xi_array
 
 def dequantize(zero_point, scale, tensor, causal_mask=False):
     """

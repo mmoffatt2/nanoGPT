@@ -2,6 +2,7 @@ import math
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+from quantization.quantize import quantize_dictionary, dequantize, create_activation_buffers
 
 class LayerNorm(nn.Module):
     """ LayerNorm but with an optional bias. PyTorch doesn't support simply bias=False """
@@ -37,6 +38,11 @@ class RMSNormRecompute(nn.Module):
         assert ndim == in_features
         self.gain = nn.Parameter(torch.ones(out_features))
         self.linear = linear_variant
+        self.quantize_rmsnorm_recompute = config.quantize_rmsnorm_recompute
+        if self.quantize_rmsnorm_recompute:
+            self.quant_method = config.quantize_rmsnorm_recompute_method
+            self.num_bits = config.quantize_rmsnorm_recompute_bits
+            create_activation_buffers(self, "quantize_rmsnorm")
 
     def forward(self, x):
         # Merge the gain parameter into the weight
@@ -44,9 +50,22 @@ class RMSNormRecompute(nn.Module):
             raise ValueError("Linear variant doesn't have a weight parameter")
         self.linear.weight.data = self.linear.weight * self.gain.view(-1, 1)
 
+        # Apply linear to input (multiply by weight)
         x = self.linear(x)
+
+        if self.quantize_rmsnorm_recompute:
+            zero_point, scale, act = quantize_dictionary[self.quant_method](x, self.num_bits)
+            setattr(self, "rmsnorm", act)
+            setattr(self, "rmsnorm_scale", scale)
+            setattr(self, "rmsnorm_zero_point", zero_point)
+
         rms = x.norm(2, dim=-1, keepdim=True) / math.sqrt(x.size(-1))
-        return x / rms
+        output = x / rms
+
+        if self.quantize_rmsnorm_recompute:
+            dequantize(zero_point, scale, output)
+
+        return output
 
 class pRMSNorm(nn.Module):
     """Partial RMS Normalization"""

@@ -33,7 +33,7 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
-from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
+from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act, create_activation_buffers
 
 def create_shared_param_group(layer_type, config):
 
@@ -99,12 +99,6 @@ def set_variant(variant, default_variant):
     if not variant:
         return default_variant
     return variant
-
-def create_activation_buffers(obj, arg):
-    arg_str = arg.split("quantize_")[1]
-    obj.register_buffer(arg_str, None)
-    obj.register_buffer(f"{arg_str}_scale", None)
-    obj.register_buffer(f"{arg_str}_zero_point", None)
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, fire_pos_enc=None):
