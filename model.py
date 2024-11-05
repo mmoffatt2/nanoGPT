@@ -33,7 +33,7 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
-from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
+from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act, create_activation_buffers
 
 def create_shared_param_group(layer_type, config):
 
@@ -100,19 +100,39 @@ def set_variant(variant, default_variant):
         return default_variant
     return variant
 
-def create_activation_buffers(obj, arg):
-    arg_str = arg.split("quantize_")[1]
-    obj.register_buffer(arg_str, None)
-    obj.register_buffer(f"{arg_str}_scale", None)
-    obj.register_buffer(f"{arg_str}_zero_point", None)
+def create_attn_buffer_dict(batch_size, block_size, n_embd, n_head, n_kv_group):
+    buffer_dict = {}
+    buffer_dict["attn_act_input"] = torch.zeros(batch_size, block_size, n_embd)
+    buffer_dict["attn_act_qk_mult_q_input"] = torch.zeros(batch_size, n_head, block_size, n_embd // n_head)
+    buffer_dict["attn_act_qk_mult_k_input"] = torch.zeros(batch_size, n_kv_group, block_size, n_embd // n_head)
+    buffer_dict["attn_act_softmax_input"] = torch.zeros(batch_size, n_head, block_size, block_size)
+    buffer_dict["attn_act_pv_mult_p_input"] = torch.zeros(batch_size, n_head, block_size, block_size)
+    buffer_dict["attn_act_pv_mult_v_input"] = torch.zeros(batch_size, n_kv_group, block_size, n_embd // n_head)
+    buffer_dict["attn_act_pv_mult_output"] = torch.zeros(batch_size, n_head, block_size, n_embd // n_head)
+    buffer_dict["attn_act_output"] = torch.zeros(batch_size, block_size, n_embd)
+    return buffer_dict
+
+def create_mlp_buffer_dict(batch_size, block_size, n_embd, expansion_factor):
+    buffer_dict = {}
+    buffer_dict["mlp_act_input"] = torch.zeros(batch_size, block_size, n_embd)
+    buffer_dict["mlp_act_activation_input"] = torch.zeros(batch_size, block_size, expansion_factor * n_embd)
+    buffer_dict["mlp_act_activation_output"] = torch.zeros(batch_size, block_size, expansion_factor * n_embd)
+    buffer_dict["mlp_act_output"] = torch.zeros(batch_size, block_size, n_embd)
+    return buffer_dict
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, fire_pos_enc=None):
         super().__init__()
+
+        self.static_eval_scales = config.static_eval_scales
+
         if (config.n_kv_group == None):
             config.n_kv_group = config.n_head
         else:
             assert config.n_embd % config.n_kv_group == 0
+
+        if config.store_activations:
+            quant_attn_buffer_dict = create_attn_buffer_dict(config.batch_size, config.block_size, config.n_embd, config.n_head, config.n_kv_group)
 
         self.quantization_attn_dict = {}
         self.quantization_attn_dict["activations_quant_method"] = config.activations_quant_method
@@ -123,7 +143,7 @@ class CausalSelfAttention(nn.Module):
             elif arg.startswith("quantize_") and "attn_act" in arg:
                 self.quantization_attn_dict[arg] = set_variant(val, config.quantize_attn_act)
                 if config.store_activations and arg != "quantize_attn_act" and self.quantization_attn_dict[arg]:
-                    create_activation_buffers(self, arg)
+                    create_activation_buffers(self, arg, quant_attn_buffer_dict)
             # Set each attention Linear precision and method
             elif arg.startswith("quantize_") and "linear_attn" in arg and arg.endswith("_bits"):
                 self.quantization_attn_dict[arg] = set_variant(val, config.quantize_linear_bits)
@@ -392,6 +412,8 @@ class MLP(nn.Module):
         # Select "mlp variant"
         self.mlp_variant = config.mlp_variant
 
+        self.static_eval_scales = config.static_eval_scales
+
         # If "MLP Variant" is KAN, then we skip MLP specific items
         if self.mlp_variant == "kan":
             self.kan = linear_dictionary["kan"](config.n_embd, config.n_embd, config=config)
@@ -402,6 +424,9 @@ class MLP(nn.Module):
             # Sets the class of linear for MLP
             self.linear_variant_mlp_up = linear_dictionary[set_variant(config.linear_variant_mlp_up, config.linear_variant_mlp)]
             self.linear_variant_mlp_down = linear_dictionary[set_variant(config.linear_variant_mlp_down, config.linear_variant_mlp)]
+
+            if config.store_activations:
+                quant_mlp_buffer_dict = create_mlp_buffer_dict(config.batch_size, config.block_size, config.n_embd, config.mlp_expansion_factor)
 
             self.quantization_mlp_dict = {}
             self.quantization_mlp_dict["activations_quant_method"] = config.activations_quant_method
@@ -414,7 +439,7 @@ class MLP(nn.Module):
                 elif arg.startswith("quantize_") and "mlp_act" in arg:
                     self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_mlp_act)
                     if config.store_activations and arg != "quantize_mlp_act" and self.quantization_mlp_dict[arg]:
-                        create_activation_buffers(self, arg)
+                        create_activation_buffers(self, arg, quant_mlp_buffer_dict)
                 # Set MLP Linear Weight precision and quantization method
                 elif arg.startswith("quantize_") and "linear_mlp" in arg and arg.endswith("_bits"):
                     self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_linear_bits)

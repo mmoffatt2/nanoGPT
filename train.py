@@ -210,7 +210,8 @@ def parse_args():
     model_group.add_argument( "--linear_mean_init", type=float, default=0.0)
     model_group.add_argument( "--linear_std_init", type=float, default=0.02)
 
-    # Quatization
+    # Quantization
+    model_group.add_argument("--static_eval_scales", default=None, action=argparse.BooleanOptionalAction, help="Whether the scales and zero points will be static during evaluation")
 
     ## Quantization Method Options
     quant_methods = ["ternary_quant", "symmetric_quant", "affine_quant", "stochastic_quant"]
@@ -555,6 +556,7 @@ class Trainer:
         # TODO only add if they are defined from the argparse
         self.model_args = {action.dest: getattr(self.args, action.dest) for action in self.model_group._group_actions}
         self.model_args['vocab_size'] = None
+        self.model_args['batch_size'] = self.args.batch_size
 
         # Training settings
         self.training_args = {action.dest: getattr(self.args, action.dest) for action in self.training_group._group_actions}

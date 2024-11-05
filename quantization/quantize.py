@@ -1,5 +1,11 @@
 import torch
 
+def create_activation_buffers(obj, arg, buffer_dict):
+    arg_str = arg.split("quantize_")[1]
+    obj.register_buffer(arg_str, buffer_dict[arg_str])
+    obj.register_buffer(f"{arg_str}_scale", torch.tensor(0.0))
+    obj.register_buffer(f"{arg_str}_zero_point", torch.tensor([0]))
+
 def set_dtype(bits):
     if bits > 16:
         return torch.int32
@@ -17,6 +23,20 @@ def ternary_quantize(tensor, bits, causal_mask=False):
     result = (tensor / scale).round().clamp(-1, 1).to(dtype=torch.int8)
     return torch.tensor([0], device=tensor.device), scale, result
 
+def static_quantize(tensor, scale, zero_point, bits, causal_mask=False):
+    """
+    Static quantization function
+    :param tensor: Tensor to be quantized
+    :param scale: Saved scale value
+    :param zero_point: Saved zero point value
+    :param bits: Number of bits of quantization
+    :return: zero point, scale, quantized tensor
+    """
+    bit_max = (1 << (bits - 1)) - 1
+    bit_min = -bit_max - 1
+    xi_array = torch.round(tensor / scale) + zero_point
+    clamped_array = torch.clamp(xi_array, min=bit_min, max=bit_max).to(dtype=set_dtype(bits))
+    return zero_point, scale, clamped_array
     
 def symmetric_quantize(tensor, bits, causal_mask=False):
     """
@@ -121,10 +141,13 @@ def dequantize(zero_point, scale, tensor, causal_mask=False):
     return dequantized
 
 def fake_quantize_act(obj, activation, tensor, num_bits, quant_method, causal_mask=False):
-    zero_point, scale, act = quantize_dictionary[quant_method](tensor, num_bits, causal_mask=causal_mask)
-    setattr(obj, activation, act)
-    setattr(obj, f"{activation}_scale", scale)
-    setattr(obj, f"{activation}_zero_point", zero_point)
+    if (not obj.training) and obj.static_eval_scales:
+        zero_point, scale, act = static_quantize(tensor, getattr(obj, f"{activation}_scale"), getattr(obj, f"{activation}_zero_point"), num_bits, causal_mask=causal_mask)
+    else:
+        zero_point, scale, act = quantize_dictionary[quant_method](tensor, num_bits, causal_mask=causal_mask)
+        setattr(obj, activation, act)
+        setattr(obj, f"{activation}_scale", scale)
+        setattr(obj, f"{activation}_zero_point", zero_point)
     return dequantize(zero_point, scale, act, causal_mask=causal_mask)
 
 class FakeLinearQuantizationFunction(torch.autograd.Function):
@@ -158,6 +181,7 @@ class FakeLinearQuantizationFunction(torch.autograd.Function):
 
 quantize_dictionary = {
     "ternary_quant": ternary_quantize,
+    "static_quant": static_quantize,
     "symmetric_quant": symmetric_quantize,
     "affine_quant": affine_quantize,
     "stochastic_quant": stochastic_quantize

@@ -22,6 +22,7 @@ class QuantizedLinear(nn.Linear):
 
         self.weight_bits = bits
         self.quant_method = method
+        self.static_eval_scales = config.static_eval_scales
 
         if self.weight_bits < 1:
             raise ValueError(f"weight_bits={self.weight_bits} must be higher than 0 ")
@@ -32,14 +33,14 @@ class QuantizedLinear(nn.Linear):
         # Placeholder for quantized weights during training
         self._fake_quantized_weight = None
         if bias == True:
-            self.register_buffer("quantized_bias", None)
-            self.register_buffer("bias_norm", None)
+            self.register_buffer("quantized_bias", torch.zeros(self.bias.shape))
+            self.register_buffer("bias_norm", torch.tensor(0.0))
             self.register_buffer("bias_zero_point", torch.tensor([0]))
 
         self.register_buffer("_step", torch.zeros(1))
 
-        self.register_buffer("quantized_weight", None)
-        self.register_buffer("weight_norm", None)
+        self.register_buffer("quantized_weight", torch.zeros(self.weight.shape))
+        self.register_buffer("weight_norm", torch.tensor(0.0))
         self.register_buffer("weight_zero_point", torch.tensor([0]))
 
     def training_quantized_forward(self, input):
@@ -74,6 +75,9 @@ class QuantizedLinear(nn.Linear):
 
     def _eval(self):
         """Sets the model for inference by quantizing the model"""
+        # If static_eval_scales is set, we don't want to update the weight buffers
+        if self.static_eval_scales:
+            return
         self.weight_zero_point[0], self.weight_norm, self.quantized_weight = quantize_dictionary[self.quant_method](self.weight, self.weight_bits)
 
         if self.bias is not None:
