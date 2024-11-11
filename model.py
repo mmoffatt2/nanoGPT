@@ -33,7 +33,8 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
-from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act, create_activation_buffers
+from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
+from quantization.activation_buffer import create_activation_buffers, create_attn_buffer_dict, create_mlp_buffer_dict
 
 def create_shared_param_group(layer_type, config):
 
@@ -99,26 +100,6 @@ def set_variant(variant, default_variant):
     if not variant:
         return default_variant
     return variant
-
-def create_attn_buffer_dict(batch_size, block_size, n_embd, n_head, n_kv_group):
-    buffer_dict = {}
-    buffer_dict["attn_act_input"] = torch.zeros(batch_size, block_size, n_embd)
-    buffer_dict["attn_act_qk_mult_q_input"] = torch.zeros(batch_size, n_head, block_size, n_embd // n_head)
-    buffer_dict["attn_act_qk_mult_k_input"] = torch.zeros(batch_size, n_kv_group, block_size, n_embd // n_head)
-    buffer_dict["attn_act_softmax_input"] = torch.zeros(batch_size, n_head, block_size, block_size)
-    buffer_dict["attn_act_pv_mult_p_input"] = torch.zeros(batch_size, n_head, block_size, block_size)
-    buffer_dict["attn_act_pv_mult_v_input"] = torch.zeros(batch_size, n_kv_group, block_size, n_embd // n_head)
-    buffer_dict["attn_act_pv_mult_output"] = torch.zeros(batch_size, n_head, block_size, n_embd // n_head)
-    buffer_dict["attn_act_output"] = torch.zeros(batch_size, block_size, n_embd)
-    return buffer_dict
-
-def create_mlp_buffer_dict(batch_size, block_size, n_embd, expansion_factor):
-    buffer_dict = {}
-    buffer_dict["mlp_act_input"] = torch.zeros(batch_size, block_size, n_embd)
-    buffer_dict["mlp_act_activation_input"] = torch.zeros(batch_size, block_size, expansion_factor * n_embd)
-    buffer_dict["mlp_act_activation_output"] = torch.zeros(batch_size, block_size, expansion_factor * n_embd)
-    buffer_dict["mlp_act_output"] = torch.zeros(batch_size, block_size, n_embd)
-    return buffer_dict
 
 class CausalSelfAttention(nn.Module):
     def __init__(self, config, fire_pos_enc=None):

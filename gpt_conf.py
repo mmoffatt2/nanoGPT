@@ -3,7 +3,6 @@ from typing import List
 import json
 @dataclass
 class GPTConfig:
-    batch_size: int = 64
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
@@ -205,6 +204,8 @@ class GPTConfig:
 
     # Quantizations
     static_eval_scales: bool = False
+    # batch size needed for activation saving during training
+    batch_size: int = 64
 
     ## Embedding Quantizations
     quantize_wte: bool = False

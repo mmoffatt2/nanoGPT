@@ -1,11 +1,5 @@
 import torch
 
-def create_activation_buffers(obj, arg, buffer_dict):
-    arg_str = arg.split("quantize_")[1]
-    obj.register_buffer(arg_str, buffer_dict[arg_str])
-    obj.register_buffer(f"{arg_str}_scale", torch.tensor(0.0))
-    obj.register_buffer(f"{arg_str}_zero_point", torch.tensor([0]))
-
 def set_dtype(bits):
     if bits > 16:
         return torch.int32
@@ -145,9 +139,10 @@ def fake_quantize_act(obj, activation, tensor, num_bits, quant_method, causal_ma
         zero_point, scale, act = static_quantize(tensor, getattr(obj, f"{activation}_scale"), getattr(obj, f"{activation}_zero_point"), num_bits, causal_mask=causal_mask)
     else:
         zero_point, scale, act = quantize_dictionary[quant_method](tensor, num_bits, causal_mask=causal_mask)
-        setattr(obj, activation, act)
-        setattr(obj, f"{activation}_scale", scale)
-        setattr(obj, f"{activation}_zero_point", zero_point)
+        if obj.training:
+            setattr(obj, activation, act)
+            setattr(obj, f"{activation}_scale", scale)
+            setattr(obj, f"{activation}_zero_point", zero_point)
     return dequantize(zero_point, scale, act, causal_mask=causal_mask)
 
 class FakeLinearQuantizationFunction(torch.autograd.Function):
