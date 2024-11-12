@@ -73,6 +73,7 @@ def parse_args():
     training_group.add_argument('--sample_only', default=False, action=argparse.BooleanOptionalAction, help="Run only the sampling process and exit")
 
     # Checkpoint args
+    training_group.add_argument('--save_major_ckpt_interval', default=None, type=int, help="Interval for saving major checkpoints.")
     training_group.add_argument('--only_save_checkpoint_at_end', default=False, action=argparse.BooleanOptionalAction)
     training_group.add_argument('--always_save_checkpoint', default=False, action=argparse.BooleanOptionalAction)
     training_group.add_argument('--patience', default=None, type=int, help="if set, will stop training if the number of evaluations since val loss was seen to decrease exceeds 'patience' setting.")
@@ -113,6 +114,7 @@ def parse_args():
     model_group.add_argument('--n_experts', default=8, type=int, help="set number of experts per MoE layer")
     model_group.add_argument('--moe_top_k', default=2, type=int)
     model_group.add_argument('--moe_router_scheme', default="softmax", type=str, help="option to set routing scheme for MoE layer, defaults to softmax")
+    model_group.add_argument('--use_flex_attn', default=None,  action=argparse.BooleanOptionalAction, help="option for using flex attention for sliding windows")
 
 
     ## Manual Steering Vector Options
@@ -177,12 +179,17 @@ def parse_args():
             "celu",
             "elu",
             "gelu",
+            "gelu_shifted",
             "glu",
             "leaky_relu",
+            "learned_spline",
             "mish",
+            "piecewise",
+            "pfla",
+            "pfla_le",
             "prelu",
-            "relu6",
             "relu",
+            "relu6",
             "rrelu",
             "selu",
             "sigmoid",
@@ -194,7 +201,29 @@ def parse_args():
         ]
 
     # ACTIVATION VARIATIONS
-    model_group.add_argument( "--activation_variant", type=str, default="gelu", choices=activation_variations,)
+    model_group.add_argument( "--activation_variant", type=str, default="gelu", choices=activation_variations)
+
+    ## Shifted Gelu
+    model_group.add_argument("--shifted_gelu_learnable_shift",  type=bool, default=True, action=argparse.BooleanOptionalAction)
+    model_group.add_argument("--shifted_gelu_initial_shift", type=float, default=0.0)
+
+    ## PiecewiseLearnableActivation - pla
+    model_group.add_argument("--pla_num_points", type=int, default=7)
+    model_group.add_argument("--pla_left_bound", type=float, default=-2.0)
+    model_group.add_argument("--pla_right_bound", type=float, default=2.0)
+
+    ## PiecewiseFullyLearnableActivation - pfla
+    model_group.add_argument("--pfla_num_points", type=int, default=200)
+    model_group.add_argument("--pfla_left_bound", type=float, default=-100.0)
+    model_group.add_argument("--pfla_right_bound", type=float, default=100.0)
+
+    ## PiecewiseFullyLearnableActivationLearnedEnds - pflale
+    model_group.add_argument("--pfla_le_num_points",   type=int,  default=30)
+    model_group.add_argument("--pfla_le_left_bound",  type=float, default=-10.0)
+    model_group.add_argument("--pfla_le_right_bound", type=float, default=10.0)
+
+    ## LearnedSplineActivation - lsa
+    model_group.add_argument("--lsa_num_knots", type=int, default=30)
 
     # LINEAR VARIATIONS
     linear_variants = ["linear", "bitlinear", "bitlinear_1p58", "bitlinear_optimized", "kan","quantized_linear"]
@@ -212,6 +241,12 @@ def parse_args():
 
     # Quantization
     model_group.add_argument("--static_eval_scales", default=None, action=argparse.BooleanOptionalAction, help="Whether the scales and zero points will be static during evaluation")
+    model_group.add_argument("--full_quant_iteration", type=int, default=None,
+                             help="The iteration where the model reaches full quantization. The increase from start_quant_level to full quantization is determined by the quant_scheduler.")
+    model_group.add_argument("--start_quant_level", type=float, default=0.0,
+                             help="Starting level of quantization. A quant level of 0 means that there is no quantization is occurring. A quant level of 1 is full quantization.")
+    model_group.add_argument("--quant_scheduler", type=str, default=None, choices=["static", "linear"],
+                             help="Scheduler for change in quant level. When linear is set, the quantization will increase dynamically based on the training step")
 
     ## Quantization Method Options
     quant_methods = ["ternary_quant", "symmetric_quant", "affine_quant", "stochastic_quant"]
@@ -443,7 +478,6 @@ def parse_args():
     logging_group.add_argument('--log_project', default='out-test', type=str)
     logging_group.add_argument('--log_run_name', default='logs-test', type=str)
     logging_group.add_argument('--timestamp', default='', type=str)
-    logging_group.add_argument('--save_nan_checkpoint', default=False, action=argparse.BooleanOptionalAction)
 
     # Module And Parameter Logging and Plots of Summary Statistics
     model_group.add_argument('--softmax_io_logging', default=False, action=argparse.BooleanOptionalAction, help="logs inputs and outputs of supported softmaxes")
@@ -557,6 +591,7 @@ class Trainer:
         self.model_args = {action.dest: getattr(self.args, action.dest) for action in self.model_group._group_actions}
         self.model_args['vocab_size'] = None
         self.model_args['batch_size'] = self.args.batch_size
+        self.model_args['eval_interval'] = self.args.eval_interval
 
         # Training settings
         self.training_args = {action.dest: getattr(self.args, action.dest) for action in self.training_group._group_actions}
@@ -646,7 +681,7 @@ class Trainer:
             print_model_tree(self.model, print_params=True)
 
         # Optimizer
-        self.scaler = torch.cuda.amp.GradScaler(enabled=(self.args.dtype == 'float16'))
+        self.scaler = torch.amp.GradScaler(self.device_type, enabled=(self.args.dtype == 'float16'))
         self.optimizer = self.model.configure_optimizers(self.args.weight_decay, self.args.learning_rate,
                                                          (self.args.beta1, self.args.beta2), self.device_type)
 
@@ -720,7 +755,7 @@ class Trainer:
             with torch.no_grad():
                 for _ in range(max_sample_tokens):
                     x_cond = x if x.size(1) <= self.args.block_size else x[:, -self.args.block_size:]
-                    logits, _ = self.model(x_cond)
+                    logits, _ = self.model(x_cond, iter_num=self.iter_num)
                     logits = logits[:, -1, :]
                     probs = torch.softmax(logits, dim=-1)
                     next_id = torch.multinomial(probs, num_samples=1)
@@ -943,7 +978,7 @@ class Trainer:
                     for k in range(self.args.eval_iters):
                         X, Y = self.get_batch(split, target_dataset=dataset)
                         with self.ctx:
-                            logits, loss = self.model(X, Y)
+                            logits, loss = self.model(X, Y, iter_num=self.iter_num)
                         dataset_losses[split][k] = loss.item()
                 out['datasets'][dataset] = {
                     'train': dataset_losses['train'].mean(),
@@ -951,6 +986,7 @@ class Trainer:
                 }
             print("test")
             out['val'] = out['datasets'][self.args.dataset]['val']
+            out['train'] = out['datasets'][self.args.dataset]['train']
             print(out['val'])
 
         else:
@@ -960,7 +996,7 @@ class Trainer:
                 for k in range(self.args.eval_iters):
                     X, Y = self.get_batch(split)
                     with self.ctx:
-                        logits, loss = self.model(X, Y)
+                        logits, loss = self.model(X, Y, iter_num=self.iter_num)
                     losses[k] = loss.item()
                 out[split] = losses.mean()
 
@@ -1089,12 +1125,24 @@ class Trainer:
                 "vram": vram_allocated,
             })
 
+    def save_checkpoint(self, filename):
+        checkpoint = {
+            'model': self.raw_model.state_dict(),
+            'optimizer': self.optimizer.state_dict(),
+            'model_args': self.model_args,
+            'iter_num': self.iter_num,
+            'best_val_loss': self.best_val_loss,
+            'config': vars(self.args),
+        }
+        torch.save(checkpoint, os.path.join(self.args.out_dir, filename))
+
     def train(self):
         self.X, self.Y = self.get_batch('train')
         t0 = time.time()
         local_iter_num = 0
         running_mfu = -1.0
         num_steps_with_worse_loss = 0
+        # TODO: Move statistics labels to statistics scripts
         graph_y_labels = []
         for layer in range(self.args.n_layer):
             for head in range(self.args.n_head):
@@ -1122,19 +1170,19 @@ class Trainer:
                         print(f"step {self.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
                         self.log_metrics(losses, lr, running_mfu, vram_allocated, self.iter_num)
 
-                    # TODO: Support NaN checks for dataset_lists
                     if math.isnan(losses["val"]):
-                        checkpoint = {
-                            'model': self.raw_model.state_dict(),
-                            'optimizer': self.optimizer.state_dict(),
-                            'model_args': self.model_args,
-                            'iter_num': self.iter_num,
-                            'best_val_loss': self.best_val_loss,
-                            'nan_iter_num' : 0,
-                            'nan' : True,
-                            'config': vars(self.args),
-                        }
-                        torch.save(checkpoint, os.path.join(self.args.out_dir, 'ckpt.pt'))
+                        # If val loss is nan, then exit.
+                        with open(self.args.out_dir + "/nan_iter_num.txt", 'w') as file:
+                            print("Exiting with nan")
+                            file.write(str(self.iter_num))
+
+                    if self.args.save_major_ckpt_interval is not None:
+                        if self.iter_num % self.args.save_major_ckpt_interval == 0:
+                            major_ckpt_name = str(self.iter_num) +'.pt'
+                            # Save major checkpoint
+                            self.save_checkpoint(major_ckpt_name)
+                            print(f"Saved major checkpoint to {self.args.out_dir}/{major_ckpt_name}")
+
                     if losses['val'] < self.best_val_loss or self.args.always_save_checkpoint:
                         if losses['val'] < self.best_val_loss:
                             self.iter_num_best_val_loss = self.iter_num
@@ -1145,20 +1193,10 @@ class Trainer:
                             # Reset early exit counter
                             num_steps_with_worse_loss = 0
                         if self.iter_num > 0:
-                            checkpoint = {
-                                'model': self.raw_model.state_dict(),
-                                'optimizer': self.optimizer.state_dict(),
-                                'model_args': self.model_args,
-                                'iter_num': self.iter_num,
-                                'best_val_loss': self.best_val_loss,
-                                'nan_iter_num' : None,
-                                'nan' : None,
-                                'config': vars(self.args),
-                            }
                             print(f"saving checkpoint to {self.args.out_dir}")
                             # Save checkpoint
-                            torch.save(checkpoint, os.path.join(self.args.out_dir, 'ckpt.pt'))
-                        # Try new checkpoint if better val loss
+                            self.save_checkpoint('ckpt.pt')
+                        # Sample
                         if self.args.max_sample_tokens:
                             self.sample_and_print(self.args.max_sample_tokens, start_tokens=self.args.sample_start_tokens)
                         # export embedding table to npy file
@@ -1195,7 +1233,7 @@ class Trainer:
                         self.model.require_backward_grad_sync = (micro_step == self.args.gradient_accumulation_steps - 1)
 
                     with self.ctx:
-                        logits, loss = self.model(self.X, self.Y)
+                        logits, loss = self.model(self.X, self.Y, iter_num=self.iter_num)
 
                         if self.args.focus_on_top1_loss:
                             loss = self.custom_loss_with_top1_focus(logits, self.Y)  # Use custom loss
@@ -1225,28 +1263,16 @@ class Trainer:
                         running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
                     print(f"iter {self.iter_num}: loss {lossf:.4f}, time {dt*1000:.2f} ms, mfu {running_mfu*100:.2f}%")
                     if math.isnan(lossf):
-                        if self.args.save_nan_checkpoint:
-                            checkpoint = {
-                                'model': self.raw_model.state_dict(),
-                                'optimizer': self.optimizer.state_dict(),
-                                'model_args': self.model_args,
-                                'iter_num': self.iter_num_best_val_loss,
-                                'best_val_loss': self.best_val_loss,
-                                'nan_iter_num' : self.iter_num,
-                                'nan' : True,
-                                'config': vars(self.args),
-                            }
-                            print(f"saving checkpoint to {self.args.out_dir}")
-                            torch.save(checkpoint, os.path.join(self.args.out_dir, 'ckpt.pt'))
-                        sys.exit("Exiting training loss is NaN")
+                        # If training loss is nan, then exit.
+                        with open(self.args.out_dir + "/nan_iter_num.txt", 'w') as file:
+                            file.write(str(self.iter_num))
+                            sys.exit("Exiting training loss is NaN")
 
                     vram_allocated = get_gpu_memory_info(info_type='used') if self.args.device != "cpu" else 0
                     self.log_metrics_non_validation(lossf, running_mfu, vram_allocated, self.iter_num)
 
-
                 if self.args.create_statistics and local_iter_num % self.args.softmax_io_log_interval == 0:
                     create_statistics(self, graph_y_labels)
-
 
                 self.iter_num += 1
                 local_iter_num += 1
@@ -1257,18 +1283,10 @@ class Trainer:
                 # End of training actions
                 if self.iter_num > self.args.max_iters:
                     if self.args.only_save_checkpoint_at_end:
-                        checkpoint = {
-                            'model': self.raw_model.state_dict(),
-                            'optimizer': self.optimizer.state_dict(),
-                            'model_args': self.model_args,
-                            'iter_num': self.iter_num,
-                            'best_val_loss': self.best_val_loss,
-                            'nan_iter_num' : None,
-                            'nan' : None,
-                            'config': vars(self.args),
-                        }
-                        print(f"saving checkpoint to {self.args.out_dir}")
-                        torch.save(checkpoint, os.path.join(self.args.out_dir, 'ckpt.pt'))
+
+                        self.save_checkpoint('ckpt.pt')
+                        print(f"Saved checkpoint to {self.args.out_dir}")
+
                         # Sample if set
                         if self.args.max_sample_tokens:
                             self.sample_and_print(self.args.max_sample_tokens, start_tokens=self.args.sample_start_tokens)

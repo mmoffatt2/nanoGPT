@@ -45,6 +45,8 @@ class GPTConfig:
 
     dropout: float = 0.0
     window_size: int = None
+    use_flex_attn: bool = None
+
     gate: bool = False
     use_moe: bool = False
     moe_layer_freq: int = 2
@@ -186,7 +188,31 @@ class GPTConfig:
     krmsnorm_recompute_percentage: float = 0.05
 
     # Activation Alternatives
+
     activation_variant: str = "gelu"
+
+    ## Shifted Gelu
+    shifted_gelu_learnable_shift: bool = True
+    shifted_gelu_initial_shift: float = 0.0
+
+    ## PiecewiseLearnableActivation - pla
+    pla_num_points: int = 7
+    pla_left_bound: float = -2.0
+    pla_right_bound: float = 2.0
+
+    ## PiecewiseFullyLearnableActivation - pfla
+    pfla_num_points: int = 200
+    pfla_left_bound: float = -100.0
+    pfla_right_bound: float = 100.0
+
+    ## PiecewiseFullyLearnableActivationLearnedEnds - pflale
+    pfla_le_num_points: int = 30
+    pfla_le_left_bound: float = -10.0
+    pfla_le_right_bound: float = 10.0
+
+    ## LearnedSplineActivation - lsa
+    lsa_num_knots: int = 30
+
 
     # Linear Alternatives
     linear_variant_attn: str = "linear"
@@ -206,6 +232,12 @@ class GPTConfig:
     static_eval_scales: bool = False
     # batch size needed for activation saving during training
     batch_size: int = 64
+
+    start_quant_level: float = 0
+    quant_scheduler: str = None
+    full_quant_iteration: int = None
+    # Needed for quant_level printing
+    eval_interval: int = 250
 
     ## Embedding Quantizations
     quantize_wte: bool = False

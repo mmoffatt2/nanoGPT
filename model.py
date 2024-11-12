@@ -12,6 +12,7 @@ import inspect
 import sys
 import re
 from rich import print
+from torch.nn.attention.flex_attention import flex_attention, create_block_mask
 
 import numpy as np
 
@@ -106,6 +107,10 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
 
         self.static_eval_scales = config.static_eval_scales
+        self.full_quant_iteration = config.full_quant_iteration
+        self.eval_interval = config.eval_interval
+        self.start_quant_level = config.start_quant_level
+        self.quant_scheduler = config.quant_scheduler
 
         if (config.n_kv_group == None):
             config.n_kv_group = config.n_head
@@ -189,6 +194,9 @@ class CausalSelfAttention(nn.Module):
         self.window_size = config.window_size
         print(f"sliding window size: {self.window_size}")
 
+        # Using flex attention
+        self.use_flex_attn = config.use_flex_attn
+
         # Gating
         self.gate = config.gate
 
@@ -216,19 +224,8 @@ class CausalSelfAttention(nn.Module):
                 self.rotary_emb_q = RotaryEmbedding(config, size=config.n_embd // self.n_head)
                 self.rotary_emb_k = RotaryEmbedding(config, size=config.n_embd // self.n_head)
 
-        # Softmax Variant Selection
-        self.softmax_variant_attn = config.softmax_variant_attn
-        if self.softmax_variant_attn == "softmax":
-            # Enable flash attention, which is compatible with 'softmax'
-            self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-            print("setting flash attn")
-        else:
-            # Remove flash attention (only compatible with 'softmax')
-            print("flash attention removed due to softmax alternative")
-            self.flash = False
-            # Set softmax_layer_attn to custom softmax alternative
-            self.softmax_layer_attn = softmax_dictionary[config.softmax_variant_attn](config)
 
+        self.flash = True
         if self.window_size is not None:
             # TODO: look into supporting sliding window attn for flash attn
             self.flash = False
@@ -252,29 +249,69 @@ class CausalSelfAttention(nn.Module):
         if self.disable_flash_attention:
             self.flash = False
 
-        if not self.flash:
+        # Softmax Variant Selection
+        self.softmax_variant_attn = config.softmax_variant_attn
+        if self.softmax_variant_attn == "softmax":
+            # Enable flash attention, which is compatible with 'softmax'
+            if self.disable_flash_attention or self.flash == False:
+                print("setting non-flash softmax attn")
+            else:
+                self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
+                print("setting flash attn")
+        else:
+            # Remove flash attention (only compatible with 'softmax')
+            print("flash attention removed due to softmax alternative")
+            self.flash = False
+            # Set softmax_layer_attn to custom softmax alternative
+            self.softmax_layer_attn = softmax_dictionary[config.softmax_variant_attn](config)
+
+        if (not self.flash) and (not self.use_flex_attn):
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
             # causal mask to ensure that attention is only applied to the left in the input sequence
             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
                                         .view(1, 1, config.block_size, config.block_size))
 
+    # Flex Attention Related
+    def sliding_window_causal(self, b, h, q_idx, kv_idx):
+        causal_mask = q_idx >= kv_idx
+        window_mask = q_idx - kv_idx <= self.window_size
+        return causal_mask & window_mask
 
-    def forward(self, x):
+    def get_block_mask(self, T, device):
+        if T not in self.block_masks:
+            block_mask = create_block_mask(
+                    self.sliding_window_causal,
+                    B=None,
+                    H=None,
+                    Q_LEN=T,
+                    KV_LEN=T,
+                    device=device
+                    )
+            self.block_masks[T] = block_mask
+        else:
+            block_mask = self.block_masks[T]
+        return block_mask
+    # End Flex Attention Related
+
+    def forward(self, x, iter_num):
         B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
 
         if self.quantization_attn_dict["quantize_attn_act_input"]:
             num_bits = self.quantization_attn_dict["quantize_attn_act_input_bits"]
             quant_method = self.quantization_attn_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "attn_act_input", x, num_bits, quant_method)
+            x = fake_quantize_act(self, "attn_act_input", x, num_bits, quant_method, iter_num)
 
         q = self.c_attn_q(x)
         k = self.c_attn_k(x)
         v = self.c_attn_v(x)
 
         if self.window_size is not None:
-            window_mask = torch.ones((1, 1, T, T), device=x.device)
-            window_mask = torch.triu(window_mask, diagonal=-self.window_size)
-            window_mask = self.bias[:,:,:T,:T] * window_mask
+            if self.use_flex_attn is not None:
+                self.block_masks = {}
+            else:
+                self.window_mask = torch.ones((1, 1, T, T), device=x.device)
+                self.window_mask = torch.triu(self.window_mask, diagonal=-self.window_size)
+                self.window_mask = self.bias[:,:,:T,:T] * self.window_mask
 
         if self.gate:
             if self.n_kv_group == self.n_head:
@@ -309,15 +346,18 @@ class CausalSelfAttention(nn.Module):
         if self.flash:
             # efficient attention using Flash Attention CUDA kernels
             y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
+        elif self.use_flex_attn and self.window_size is not None:
+            block_mask = self.get_block_mask(T, x.device)
+            y = torch.nn.attention.flex_attention.flex_attention(q, k, v, block_mask=block_mask)
         else:
             if self.quantization_attn_dict["quantize_attn_act_qk_mult_q_input"]:
                 num_bits = self.quantization_attn_dict["quantize_attn_act_qk_mult_q_input_bits"]
                 quant_method = self.quantization_attn_dict["activations_quant_method"]
-                q = fake_quantize_act(self, "attn_act_qk_mult_q_input", q, num_bits, quant_method)
+                q = fake_quantize_act(self, "attn_act_qk_mult_q_input", q, num_bits, quant_method, iter_num)
             if self.quantization_attn_dict["quantize_attn_act_qk_mult_k_input"]:
                 num_bits = self.quantization_attn_dict["quantize_attn_act_qk_mult_k_input_bits"]
                 quant_method = self.quantization_attn_dict["activations_quant_method"]
-                k = fake_quantize_act(self, "attn_act_qk_mult_k_input", k, num_bits, quant_method)
+                k = fake_quantize_act(self, "attn_act_qk_mult_k_input", k, num_bits, quant_method, iter_num)
 
             att = None
             # manual implementation of attention
@@ -330,7 +370,7 @@ class CausalSelfAttention(nn.Module):
             # apply masks
             if self.window_size is not None:
                 # add mask for sliding window attention
-                att = att.masked_fill(window_mask == 0, float('-inf'))
+                att = att.masked_fill(self.window_mask == 0, float('-inf'))
             else:
                 # regular lower triangle attention
                 att = att.masked_fill(self.bias[:,:,:T,:T].to(x.device) == 0, float('-inf'))
@@ -343,7 +383,7 @@ class CausalSelfAttention(nn.Module):
             if self.quantization_attn_dict["quantize_attn_act_softmax_input"]:
                 num_bits = self.quantization_attn_dict["quantize_attn_act_softmax_input_bits"]
                 quant_method = self.quantization_attn_dict["activations_quant_method"]
-                att = fake_quantize_act(self, "attn_act_softmax_input", att, num_bits, quant_method, causal_mask=True)
+                att = fake_quantize_act(self, "attn_act_softmax_input", att, num_bits, quant_method, iter_num, causal_mask=True)
 
             # softmax variation
             if self.softmax_variant_attn != 'softmax':
@@ -356,11 +396,11 @@ class CausalSelfAttention(nn.Module):
             if self.quantization_attn_dict["quantize_attn_act_pv_mult_p_input"]:
                 num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_p_input_bits"]
                 quant_method = self.quantization_attn_dict["activations_quant_method"]
-                att = fake_quantize_act(self, "attn_act_pv_mult_p_input", att, num_bits, quant_method)
+                att = fake_quantize_act(self, "attn_act_pv_mult_p_input", att, num_bits, quant_method, iter_num)
             if self.quantization_attn_dict["quantize_attn_act_pv_mult_v_input"]:
                 num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_v_input_bits"]
                 quant_method = self.quantization_attn_dict["activations_quant_method"]
-                v = fake_quantize_act(self, "attn_act_pv_mult_v_input", v, num_bits, quant_method)
+                v = fake_quantize_act(self, "attn_act_pv_mult_v_input", v, num_bits, quant_method, iter_num)
 
             if self.n_head != self.n_kv_group:
                 v_repeated = v.repeat_interleave(self.n_head // self.n_kv_group, dim=1)
@@ -371,7 +411,7 @@ class CausalSelfAttention(nn.Module):
         if self.quantization_attn_dict["quantize_attn_act_pv_mult_output"]:
             num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_output_bits"]
             quant_method = self.quantization_attn_dict["activations_quant_method"]
-            y = fake_quantize_act(self, "attn_act_pv_mult_output", y, num_bits, quant_method)
+            y = fake_quantize_act(self, "attn_act_pv_mult_output", y, num_bits, quant_method, iter_num)
 
         y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
 
@@ -381,7 +421,7 @@ class CausalSelfAttention(nn.Module):
         if self.quantization_attn_dict["quantize_attn_act_output"]:
             num_bits = self.quantization_attn_dict["quantize_attn_act_output_bits"]
             quant_method = self.quantization_attn_dict["activations_quant_method"]
-            y = fake_quantize_act(self, "attn_act_output", y, num_bits, quant_method)
+            y = fake_quantize_act(self, "attn_act_output", y, num_bits, quant_method, iter_num)
 
         return y
 
@@ -390,17 +430,23 @@ class MLP(nn.Module):
     def __init__(self, config):
         super().__init__()
 
+        # Quantization Related
+        self.full_quant_iteration = config.full_quant_iteration
+        self.eval_interval = config.eval_interval # print quantization level at eval
+        self.static_eval_scales = config.static_eval_scales
+        self.start_quant_level = config.start_quant_level
+        self.quant_scheduler = config.quant_scheduler
+        
         # Select "mlp variant"
         self.mlp_variant = config.mlp_variant
 
-        self.static_eval_scales = config.static_eval_scales
 
         # If "MLP Variant" is KAN, then we skip MLP specific items
         if self.mlp_variant == "kan":
             self.kan = linear_dictionary["kan"](config.n_embd, config.n_embd, config=config)
         else:
             # Select activation variant
-            self.activation_variant = activation_dictionary[config.activation_variant]
+            self.activation_variant = activation_dictionary[config.activation_variant](config=config)
 
             # Sets the class of linear for MLP
             self.linear_variant_mlp_up = linear_dictionary[set_variant(config.linear_variant_mlp_up, config.linear_variant_mlp)]
@@ -438,11 +484,12 @@ class MLP(nn.Module):
 
         self.dropout = nn.Dropout(config.dropout)
 
-    def forward(self, x):
+    def forward(self, x, iter_num):
+
         if self.quantization_mlp_dict["quantize_mlp_act_input"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_input_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "mlp_act_input", x, num_bits, quant_method)
+            x = fake_quantize_act(self, "mlp_act_input", x, num_bits, quant_method, iter_num)
 
         if self.mlp_variant == "kan":
             x = self.kan(x)
@@ -453,14 +500,14 @@ class MLP(nn.Module):
             if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
                 num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
                 quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x = fake_quantize_act(self, "mlp_act_activation_input", x, num_bits, quant_method)
+                x = fake_quantize_act(self, "mlp_act_activation_input", x, num_bits, quant_method, iter_num)
 
             x = self.activation_variant(x)
 
             if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
                 num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
                 quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x = fake_quantize_act(self, "mlp_act_activation_output", x, num_bits, quant_method)
+                x = fake_quantize_act(self, "mlp_act_activation_output", x, num_bits, quant_method, iter_num)
 
             x = self.c_proj(x)
 
@@ -470,14 +517,14 @@ class MLP(nn.Module):
             if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
                 num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
                 quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x_in1 = fake_quantize_act(self, "mlp_act_activation_input", x_in1, num_bits, quant_method)
+                x_in1 = fake_quantize_act(self, "mlp_act_activation_input", x_in1, num_bits, quant_method, iter_num)
 
             x_in1 = self.activation_variant(x_in1)
 
             if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
                 num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
                 quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x_in1 = fake_quantize_act(self, "mlp_act_activation_output", x_in1, num_bits, quant_method)
+                x_in1 = fake_quantize_act(self, "mlp_act_activation_output", x_in1, num_bits, quant_method, iter_num)
 
             x_in2 = self.c_fc_in2(x)
             x_out = x_in1 * x_in2
@@ -488,7 +535,7 @@ class MLP(nn.Module):
         if self.quantization_mlp_dict["quantize_mlp_act_output"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_output_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "mlp_act_output", x, num_bits, quant_method)
+            x = fake_quantize_act(self, "mlp_act_output", x, num_bits, quant_method, iter_num)
         return x
 
 class Block(nn.Module):
@@ -517,22 +564,22 @@ class Block(nn.Module):
         else:
             self.mlp = mlp
 
-    def forward(self, x):
+    def forward(self, x, iter_num):
         def custom_forward(*inputs):
             x = inputs[0]
             if self.use_post_ln:
                 if self.use_parallel_mlp:
-                    x = self.ln_1(x + self.attn(x) + self.mlp(x))
+                    x = self.ln_1(x + self.attn(x, iter_num) + self.mlp(x, iter_num))
                 else:
-                    x = self.ln_1(x + self.attn(x))
-                    x = self.ln_2(x + self.mlp(x))
+                    x = self.ln_1(x + self.attn(x, iter_num))
+                    x = self.ln_2(x + self.mlp(x, iter_num))
             else:
                 if self.use_parallel_mlp:
                     ln_1 = self.ln_1(x)
-                    x = x + self.attn(ln_1) + self.mlp(ln_1)
+                    x = x + self.attn(ln_1, iter_num) + self.mlp(ln_1, iter_num)
                 else:
-                    x = x + self.attn(self.ln_1(x))
-                    x = x + self.mlp(self.ln_2(x))
+                    x = x + self.attn(self.ln_1(x), iter_num)
+                    x = x + self.mlp(self.ln_2(x), iter_num)
             return x
 
         if self.use_gradient_checkpointing and x.requires_grad:
@@ -744,7 +791,7 @@ class GPT(nn.Module):
         np.savez(file_path, scale_up=scale_up_matrix, scale_down=scale_down_matrix)
         print(f"Scale matrices saved to {file_path}")
 
-    def forward(self, idx, targets=None):
+    def forward(self, idx, targets=None, iter_num=None):
         device = idx.device
         b, t = idx.size()
         # assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
@@ -771,9 +818,9 @@ class GPT(nn.Module):
         for block in self.transformer.h:
             # Propagate tokens through layers
             if self.config.use_gradient_checkpointing:
-                x = checkpoint.checkpoint(block, x, use_reentrant=self.config.recompute_backward_pass)
+                x = checkpoint.checkpoint(block, x, iter_num, use_reentrant=self.config.recompute_backward_pass)
             else:
-                x = block(x)
+                x = block(x, iter_num)
 
             # Intercept for Learned Steering Vectors
             if self.use_lsv and layer == self.config.apply_lsv_at_layer_idx:
@@ -1095,4 +1142,3 @@ class MoELayer(nn.Module):
                 final_output[expert_mask] += weighted_output.squeeze(1)
         # print(f"final_output.shape = {final_output.shape}\n")
         return final_output
-
