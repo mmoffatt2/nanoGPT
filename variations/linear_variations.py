@@ -107,7 +107,6 @@ class QuantizedLinear(nn.Linear):
             out = self.inference_quantized_forward(input)
         return out
 
-
 class BitLinear1p58(nn.Linear):
     """ BitLinear from Era of 1.58 LLMs Paper
     Source: https://huggingface.co/1bitLLM/bitnet_b1_58-large/blob/main/utils_quant.py
