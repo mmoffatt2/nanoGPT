@@ -81,6 +81,24 @@ model_variation_dictionary = {
         'mlp_expansion_factor': 5.8333,
         'use_abs_pos_embeddings': False,
         'use_rotary_embeddings': True,
+    },
+    'Qwen/Qwen2-0.5B': {
+        'n_layer': 24,
+        'n_head': 14,
+        'n_kv_group': 2,
+        'n_embd': 896,
+        "vocab_size": 151936,
+        'block_size': 128,
+        'bias': False,
+        "qkv_bias": True,
+        'norm_variant_attn': 'rmsnorm',
+        'norm_variant_output': 'rmsnorm',
+        'activation_variant': 'silu',
+        'mlp_variant': 'swiglu',
+        'dropout': 0.0,
+        'mlp_expansion_factor': 5.4285,
+        'use_abs_pos_embeddings': False,
+        'use_rotary_embeddings': True,
     }
 }
 
