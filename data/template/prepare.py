@@ -168,17 +168,17 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        choices=["sentencepiece", "tiktoken", "char", "custom", "replace", "lines", "Qwen2"],
+        choices=["sentencepiece", "tiktoken", "char", "custom", "replace", "lines", "qwen2"],
         default="tiktoken",
         help="Tokenization method",
     )
 
     parser.add_argument(
-        "--qwen2_type",
+        "--qwen2_model",
         type=str,
-        choices=['Qwen/Qwen2-0.5B', 'Qwen/Qwen2-1.5B', 'Qwen/Qwen2-7B'],
-        default="Qwen/Qwen2-1.5B",
-        help="Model for Qwen2 tokenization",
+        choices=['qwen2_0p5b', 'qwen2_1p5b', 'qwen2_7b'],
+        default="qwen2_1p5b",
+        help="Model for qwen2 tokenization",
     )
 
     # Sentence Piece only arguments
@@ -484,9 +484,17 @@ def main():
         with open("meta.pkl", "wb") as f:
             pickle.dump(meta, f)
 
-    elif args.method == "Qwen2":
+    elif args.method == "qwen2":
+        s = args.qwen2_model
+        s = s[0].upper() + s[1:]
+        # Replace '2_' with '/Qwen2-'
+        s = s.replace('2_', '/Qwen2-')
+        # Replace 'p' with '.'
+        s = s.replace('p', '.')
+        # Capitalize 'b' at the end to 'B'
+        huggingface_name = s[:-1] + 'B'
         # Load the Qwen2 tokenizer
-        tokenizer = AutoTokenizer.from_pretrained(args.qwen2_type, trust_remote_code=True)
+        tokenizer = AutoTokenizer.from_pretrained(huggingface_name, trust_remote_code=True)
         # Tokenize the train data
         print("Tokenizing training data with Qwen2 tokenizer...")
         train_ids = tokenizer.encode(train_data, add_special_tokens=False)
@@ -499,8 +507,8 @@ def main():
         # Save meta information
         meta = {
             "vocab_size": vocab_size,
-            "tokenizer": "Qwen2",
-            "qwen2_type": args.qwen2_type,
+            "tokenizer": "qwen2",
+            "qwen2_model": huggingface_name,
         }
         # Save meta.pkl
         with open("meta.pkl", "wb") as f:

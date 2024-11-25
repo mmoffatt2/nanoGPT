@@ -46,7 +46,7 @@ model_variation_dictionary = {
         'norm_variant_attn': 'layernorm',
         'norm_variant_output': 'layernorm',
     },
-    'Qwen/Qwen2-7B': {
+    'qwen2_7b': ({
         'n_layer': 28,
         'n_head': 28,
         'n_kv_group': 4,
@@ -63,8 +63,8 @@ model_variation_dictionary = {
         'mlp_expansion_factor': 5.2857,
         'use_abs_pos_embeddings': False,
         'use_rotary_embeddings': True,
-    },
-    'Qwen/Qwen2-1.5B': {
+    }, "Qwen/Qwen2-7B"),
+    'qwen2_1p5b': ({
         'n_layer': 28,
         'n_head': 12,
         'n_kv_group': 2,
@@ -81,8 +81,8 @@ model_variation_dictionary = {
         'mlp_expansion_factor': 5.8333,
         'use_abs_pos_embeddings': False,
         'use_rotary_embeddings': True,
-    },
-    'Qwen/Qwen2-0.5B': {
+    }, "Qwen/Qwen2-1.5B"),
+    'qwen2_0p5b': ({
         'n_layer': 24,
         'n_head': 14,
         'n_kv_group': 2,
@@ -99,7 +99,7 @@ model_variation_dictionary = {
         'mlp_expansion_factor': 5.4285,
         'use_abs_pos_embeddings': False,
         'use_rotary_embeddings': True,
-    }
+    }, "Qwen/Qwen2-0.5B")
 }
 
 """

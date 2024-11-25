@@ -180,7 +180,7 @@ class GPTConfig:
     norm_variant_attn: str = "rmsnorm"
     norm_variant_output: str = "rmsnorm"
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
-    qkv_bias: bool = False
+    qkv_bias: bool = None
     prmsnorm_pct: float = 0.0625
     krmsnorm_num: float = 10
     krmsnorm_quantize_type: str = 'int8'
