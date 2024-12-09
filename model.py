@@ -34,7 +34,7 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
-from variations.from_pretrained import from_pretrained, from_pretrained_qwen
+from variations.from_pretrained_variations import from_pretrained, from_pretrained_qwen
 from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
 
 def create_shared_param_group(layer_type, config):
