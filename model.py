@@ -470,7 +470,7 @@ class MLP(nn.Module):
                     self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_linear_method)
 
             # Instantiate Linear Layers
-            intermediate_size = math.ceil(config.mlp_expansion_factor * config.n_embd)
+            intermediate_size = round(config.mlp_expansion_factor * config.n_embd)
             if self.mlp_variant == "mlp":
                 self.c_fc = self.linear_variant_mlp_up(config.n_embd, intermediate_size, config, self.quantization_mlp_dict["quantize_linear_mlp_up_method"], self.quantization_mlp_dict["quantize_linear_mlp_up_bits"], bias=config.bias)
                 self.c_proj = self.linear_variant_mlp_down(intermediate_size, config.n_embd, config, self.quantization_mlp_dict["quantize_linear_mlp_down_method"], self.quantization_mlp_dict["quantize_linear_mlp_down_bits"], bias=config.bias)

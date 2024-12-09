@@ -95,6 +95,7 @@ def parse_args():
     )
     training_group.add_argument('--prev_run_ckpt', default='', type=str)
     training_group.add_argument('--csv_ckpt_dir', default='', type=str)
+    training_group.add_argument('--init_from_ckpt', default='ckpt.pt', type=str, help="if save_major_ckpt_interval was set, can use to init from specific ckpts")
 
     # Data args
     training_group.add_argument('--dataset', default='shakespeare_char', type=str)
@@ -435,12 +436,25 @@ def parse_args():
     model_group.add_argument("--sigsoftmax_base", type=float, default=2.0)
 
     ### Strongermax Options - Testing Incremental Adjustments to Regular Softmax
-    model_group.add_argument("--strongermax_strength", type=float, default=2.718)
-    model_group.add_argument('--strongermax_sum_to_1', default=True, action=argparse.BooleanOptionalAction)
+    model_group.add_argument("--strongermax_strength", type=float, default=math.e)
+    model_group.add_argument('--strongermax_div_by_sum_of_terms', default=True, action=argparse.BooleanOptionalAction)
     model_group.add_argument("--strongermax_divisor", type=float, default=1.0)
     model_group.add_argument('--strongermax_use_xmax', default=True, action=argparse.BooleanOptionalAction)
     model_group.add_argument('--strongermax_xmax_guess', type=float, default=None)
     model_group.add_argument('--strongermax_overflow_recompute', default=False, action=argparse.BooleanOptionalAction)
+    model_group.add_argument('--strongermax_overflow_recompute_value', type=float, default=88.0)
+
+    ### Strongermax Clamping
+    model_group.add_argument('--strongermax_clamping', default=False, action=argparse.BooleanOptionalAction)
+    model_group.add_argument('--strongermax_clamp_value', type=float, default=88.0)
+
+    ### From https://www.evanmiller.org/attention-is-off-by-one.html
+    model_group.add_argument('--strongermax_obo', type=float, default=0.0)
+    model_group.add_argument('--strongermax_use_learned_obo', default=False, action=argparse.BooleanOptionalAction)
+
+    ### Temperature adjustment factor
+    model_group.add_argument('--strongermax_temperature_factor', type=float, default=1.0)
+    model_group.add_argument('--strongermax_use_learned_temperature_factor', default=False, action=argparse.BooleanOptionalAction)
 
     ### ExpPolymax Options
     model_group.add_argument('--exppolymax_use_euler_base', default=True, action=argparse.BooleanOptionalAction)
@@ -630,11 +644,11 @@ class Trainer:
             self.best_val_loss = 1e9 # really big number
         elif self.args.init_from == 'resume' or self.args.init_from == 'prev_run':
             if self.args.init_from == 'resume':
-                ckpt_path = os.path.join(self.args.out_dir, 'ckpt.pt')
+                ckpt_path = os.path.join(self.args.out_dir, self.args.init_from_ckpt)
                 checkpoint = torch.load(ckpt_path, map_location=self.device)
                 self.iter_num = checkpoint['iter_num']
             else:
-                ckpt_path = os.path.join(self.args.prev_run_ckpt, 'ckpt.pt')
+                ckpt_path = os.path.join(self.args.prev_run_ckpt, self.args.init_from_ckpt)
                 checkpoint = torch.load(ckpt_path, map_location=self.device)
                 self.iter_num = 0
 
@@ -749,6 +763,7 @@ class Trainer:
             wandb.init(project=self.args.wandb_project, name=self.args.wandb_run_name, config=self.args)
         self.load_tokenizer()
 
+
     def load_tokenizer(self):
         meta_path = os.path.join('data', self.args.dataset, 'meta.pkl')
         if os.path.exists(meta_path):
@@ -769,12 +784,58 @@ class Trainer:
                 self.encode = lambda s: tokenizer.encode(s, add_special_tokens=False)
                 self.decode = lambda l: tokenizer.decode(l)
                 print(f"Using Qwen tokenizer: {meta["qwen2_model"]}")
+            elif 'tokenizer' in meta and meta['tokenizer'] == 'custom_char_with_byte_fallback':
+                self.stoi = meta['stoi']
+                self.itos = meta['itos']
+                self.custom_char_count = meta['custom_char_count']
+                self.encode = self.custom_char_with_byte_fallback_encode
+                self.decode = self.custom_char_with_byte_fallback_decode
+                print("Using CustomCharTokenizerWithByteFallback tokenizer")
             else:
                 self.stoi, self.itos = meta['stoi'], meta['itos']
                 self.encode = lambda s: [self.stoi[c] for c in s]
                 self.decode = lambda l: ''.join([self.itos[i] for i in l])
         else:
             raise FileNotFoundError(f"Meta file not found at {meta_path}")
+
+
+    def custom_char_with_byte_fallback_encode(self, text):
+        ids = []
+        for ch in text:
+            if ch in self.stoi:
+                ids.append(self.stoi[ch])
+            else:
+                # Byte fallback
+                byte_sequence = ch.encode('utf-8')
+                for byte in byte_sequence:
+                    ids.append(self.stoi[byte])
+
+        return ids
+
+
+    def custom_char_with_byte_fallback_decode(self, ids):
+        chars = []
+        idx = 0
+        while idx < len(ids):
+            id = ids[idx]
+            if id < self.custom_char_count:
+                # It's a custom character
+                chars.append(self.itos[id])
+                idx += 1
+            else:
+                # It's a byte
+                byte_buffer = []
+                while idx < len(ids) and ids[idx] >= self.custom_char_count:
+                    byte_value = self.itos[ids[idx]]
+                    byte_buffer.append(byte_value)
+                    idx += 1
+                # Convert byte buffer to character
+                byte_array = bytes(byte_buffer)
+                try:
+                    chars.append(byte_array.decode('utf-8'))
+                except UnicodeDecodeError:
+                    chars.append('�')  # Replacement character for invalid sequences
+        return ''.join(chars)
 
     @torch.no_grad()
     def sample_and_print(self, max_sample_tokens, start_tokens="\n"):
