@@ -3,7 +3,7 @@
 import unittest
 import os
 import sys  # Import sys to exit with error codes
-from tokenizers import (
+from tokenizer_options import (
     NumericRangeTokenizer,
     SentencePieceTokenizer,
     TiktokenTokenizer,

@@ -2,7 +2,7 @@ import json
 import pickle
 import argparse
 import numpy as np
-from tokenizers import (
+from tokenizer_options import (
     NumericRangeTokenizer,
     SentencePieceTokenizer,
     TiktokenTokenizer,
