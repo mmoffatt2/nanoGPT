@@ -660,7 +660,7 @@ class Trainer:
             altered_model_args = {action.dest: getattr(self.args, action.dest) for action in self.model_group._group_actions if action.default != getattr(self.args, action.dest)}
             for k in altered_model_args:
                 self.model_args[k] = altered_model_args[k]
-                setattr(self.args, k, variation_dict[k])
+                setattr(self.args, k, altered_model_args[k])
 
             self.load_data()
             gptconf = GPTConfig(**self.model_args)
