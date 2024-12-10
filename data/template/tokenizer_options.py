@@ -336,6 +336,7 @@ class Qwen2Tokenizer(Tokenizer):
         meta = {
             "vocab_size": self.vocab_size,
             "tokenizer": "qwen2",
+            "qwen2_model": self.huggingface_model_name,
             "special_tokens": self.special_tokens,
         }
         self.save_meta(meta)

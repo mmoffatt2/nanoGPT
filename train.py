@@ -87,11 +87,11 @@ def parse_args():
     )
     training_group.add_argument('--gpt2_type', default='gpt2', type=str)
     training_group.add_argument(
-        '--qwen_model',
+        '--qwen2_model',
         default='qwen2_1p5b',
         choices=['qwen2_0p5b', 'qwen2_1p5b', 'qwen2_7b'],
         type=str,
-        help="Type of Qwen model to use for initialization."
+        help="Type of Qwen2 model to use for initialization."
     )
     training_group.add_argument('--prev_run_ckpt', default='', type=str)
     training_group.add_argument('--csv_ckpt_dir', default='', type=str)
@@ -698,12 +698,12 @@ class Trainer:
 
         elif self.args.init_from.startswith('qwen2'):
 
-            assert self.args.qwen2_method in model_variation_dictionary
+            assert self.args.qwen2_model in model_variation_dictionary
 
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number
 
-            variation_dict, huggingface_name = model_variation_dictionary[self.args.qwen2_method]
+            variation_dict, huggingface_name = model_variation_dictionary[self.args.qwen2_model]
             # NOTE: the hierarchy of parameters goes: 1)variation_dict >> 2)cmd-line args >> 3)GPTConfig defaults
             for k in variation_dict:
                 self.model_args[k] = variation_dict[k]
@@ -783,7 +783,7 @@ class Trainer:
                 tokenizer = AutoTokenizer.from_pretrained(meta["qwen2_model"], trust_remote_code=True)
                 self.encode = lambda s: tokenizer.encode(s, add_special_tokens=False)
                 self.decode = lambda l: tokenizer.decode(l)
-                print(f"Using Qwen tokenizer: {meta['qwen2_model']}")
+                print(f"Using Qwen2 tokenizer: {meta['qwen2_model']}")
             elif 'tokenizer' in meta and meta['tokenizer'] == 'custom_char_with_byte_fallback':
                 self.stoi = meta['stoi']
                 self.itos = meta['itos']
