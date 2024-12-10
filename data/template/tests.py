@@ -210,7 +210,7 @@ class TestTokenizers(unittest.TestCase):
             os.remove(args.custom_chars_file)
 
     def test_gemma_tokenizer(self):
-        args = Namespace(qwen2_model="gemma-2b")
+        args = Namespace(gemma_model="gemma-2b")
         tokenizer = GemmaTokenizer(args)
 
         # Tokenize
