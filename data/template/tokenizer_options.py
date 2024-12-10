@@ -326,7 +326,13 @@ class Qwen2Tokenizer(Tokenizer):
         self.special_tokens = self.tokenizer.special_tokens_map
 
     def tokenize(self, data):
-        ids = self.tokenizer.encode(data, add_special_tokens=True)
+        print(f"Tokenizing data of size: {len(data)}")
+        chunk_size = 1024
+        ids = []
+        for i in range(0, len(data), chunk_size):
+            chunk = data[i:i + chunk_size]
+            ids.extend(self.tokenizer.encode(chunk, add_special_tokens=True))
+        print(f"Generated {len(ids)} token IDs.")
         meta = {
             "vocab_size": self.vocab_size,
             "tokenizer": "qwen2",
