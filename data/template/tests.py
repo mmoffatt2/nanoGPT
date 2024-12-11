@@ -10,7 +10,7 @@ from tokenizer_options import (
     CustomTokenizer,
     CharTokenizer,
     CustomCharTokenizerWithByteFallback,
-    GemmaTokenizer
+    HuggingFaceTokenizer
 )
 from argparse import Namespace
 from rich.console import Console
@@ -211,7 +211,7 @@ class TestTokenizers(unittest.TestCase):
 
     def test_gemma_tokenizer(self):
         args = Namespace(gemma_model="gemma-2b")
-        tokenizer = GemmaTokenizer(args)
+        tokenizer = HuggingFaceTokenizer(args)
 
         # Tokenize
         ids = tokenizer.tokenize(self.sample_text)

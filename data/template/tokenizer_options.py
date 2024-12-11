@@ -312,13 +312,17 @@ class CustomCharTokenizerWithByteFallback(Tokenizer):
                     byte_buffer = []
         return ''.join(chars)
 
-class GemmaTokenizer(Tokenizer):
+class HuggingFaceTokenizer(Tokenizer):
     def __init__(self, args):
         """
-        Initialize the Qwen2Tokenizer using Hugging Face's AutoTokenizer.
+        Initialize Tokenizer using Hugging Face's AutoTokenizer.
         """
         super().__init__(args)
-        self.huggingface_model_name = f"google/{args.gemma_model}"
+        self.model = args.method
+        if args.method == "gemma":
+            self.huggingface_model_name = f"google/{args.gemma_model}"
+        if args.method == "qwen2":
+            self.huggingface_model_name = f"Qwen/Qwen2-{args.qwen2_model.split('_')[1].replace('p', '.').upper()}"
         self.tokenizer = AutoTokenizer.from_pretrained(self.huggingface_model_name)
 
         # Save vocab size and other meta information
@@ -335,8 +339,8 @@ class GemmaTokenizer(Tokenizer):
         print(f"Generated {len(ids)} token IDs.")
         meta = {
             "vocab_size": self.vocab_size,
-            "tokenizer": "gemma",
-            "gemma_model": self.huggingface_model_name,
+            "tokenizer": self.model,
+            f"{self.model}_model": self.huggingface_model_name,
             "special_tokens": self.special_tokens,
         }
         self.save_meta(meta)

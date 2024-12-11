@@ -10,7 +10,7 @@ from tokenizer_options import (
     CustomTokenizer,
     CharTokenizer,
     CustomCharTokenizerWithByteFallback,
-    GemmaTokenizer
+    HuggingFaceTokenizer
 )
 from tqdm import tqdm
 import os
@@ -104,7 +104,7 @@ def main():
     elif args.method == "custom_char_byte_fallback":
         tokenizer = CustomCharTokenizerWithByteFallback(args)
     elif args.method == "gemma":
-        tokenizer = GemmaTokenizer(args)
+        tokenizer = HuggingFaceTokenizer(args)
     else:
         raise ValueError(f"Unknown tokenization method: {args.method}")
 
