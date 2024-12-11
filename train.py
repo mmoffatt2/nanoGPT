@@ -781,7 +781,7 @@ class Trainer:
                 self.decode = lambda l: ''.join([self.itos[i] for i in l])
             elif 'tokenizer' in meta and meta['tokenizer'] == 'qwen2':
                 tokenizer = AutoTokenizer.from_pretrained(meta["qwen2_model"], trust_remote_code=True)
-                self.encode = lambda s: tokenizer.encode(s, add_special_tokens=False)
+                self.encode = lambda s: tokenizer.encode(s, add_special_tokens=True)
                 self.decode = lambda l: tokenizer.decode(l)
                 print(f"Using Qwen2 tokenizer: {meta['qwen2_model']}")
             elif 'tokenizer' in meta and meta['tokenizer'] == 'custom_char_with_byte_fallback':
