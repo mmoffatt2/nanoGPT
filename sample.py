@@ -62,7 +62,7 @@ def parse_args():
     parser.add_argument("--eval_only", action=argparse.BooleanOptionalAction, help="Enable evaluation only mode to calculate and print validation loss")
     parser.add_argument("--eval_iters", type=int, default=250, help="iterations for evaluation")
     parser.add_argument("--eval_dataset", type=str, default=None, help="dataset for evaluation")
-    parser.add_argument("--few_shot_examples", type=int, default=0, 
+    parser.add_argument("--few_shot_examples", type=int, default=0,
                         help="Number of few-shot examples to prepend to the input prompt for evaluation")
     parser.add_argument("--hellaswag_benchmark", action=argparse.BooleanOptionalAction, default=False, help="whether to run hellaswag benchmarking")
 
@@ -354,7 +354,7 @@ def main():
         print(f"Obtained vector saved to {args.save_avg_vector}")
 
     if args.hellaswag_benchmark:
-        evaluate_hellaswag_few_shot(model, encode, args.device, args.few_shot_examples, args.start, temperature=args.temperature, seed=args.seed)
+        evaluate_hellaswag_few_shot(model, encode, args.device, args.few_shot_examples, args.start, eval_iters=args.eval_iters, temperature=args.temperature, seed=args.seed)
         return
 
     if args.interactive:

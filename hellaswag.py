@@ -4,7 +4,7 @@ import random
 from torch.nn import functional as F
 from datasets import load_dataset
 
-def compute_logprob_for_sequence(model, idx_cond, next_tokens, temperature=1.0):
+def compute_logprob_for_sequence(model, idx_cond, next_tokens, temperature=0.8):
     """
     Compute log probability of next_tokens given idx_cond using the model.
     Returns the sum of the log probabilities for the given next_tokens.
@@ -23,7 +23,7 @@ def compute_logprob_for_sequence(model, idx_cond, next_tokens, temperature=1.0):
             idx_cond = torch.cat((idx_cond, token.unsqueeze(0).unsqueeze(0)), dim=1)
     return logprob_sum
 
-def evaluate_hellaswag_few_shot(model, encode, device, few_shot_examples, start_text, temperature=1.0, seed=1337):
+def evaluate_hellaswag_few_shot(model, encode, device, few_shot_examples, start_text, eval_iters=250, temperature=0.8, seed=1337):
     """
     Perform few-shot evaluation on the HellaSwag dataset using a random subset for the few-shot prompt.
     - few_shot_examples: number of validation examples to use as few-shot demonstrations.
@@ -31,7 +31,7 @@ def evaluate_hellaswag_few_shot(model, encode, device, few_shot_examples, start_
     - seed: random seed for reproducibility of the few-shot sample.
     """
     # Load HellaSwag dataset
-    ds = load_dataset("rowan/hellaswag", split='validation')
+    ds = load_dataset("rowan/hellaswag", split='validation', trust_remote_code=True)
 
     # Set random seed for reproducibility
     random.seed(seed)
@@ -45,23 +45,23 @@ def evaluate_hellaswag_few_shot(model, encode, device, few_shot_examples, start_
 
     few_shot_indices = np.random.choice(total_examples, size=few_shot_examples, replace=False)
     print("few_shot_indices: ", few_shot_indices)
-    eval_indices = list(set(range(total_examples)) - set(few_shot_indices))
-    print("eval_indices: ", eval_indices)
+    remaining_indices = list(set(range(total_examples)) - set(few_shot_indices))
+    eval_indices = np.random.choice(remaining_indices, size=eval_iters, replace=False)
+    print(f"Number of evaluation examples: {len(eval_indices)}")
 
     # Construct the few-shot prompt
     if few_shot_examples > 0:
         few_shot_prompt = []
         for idx in few_shot_indices:
-            example = ds[idx]
-            correct_ending = example['endings'][example['label']]
+            example = ds[int(idx)]
+            correct_ending = example['endings'][int(example['label'])]
             # Format the few-shot example
-            example_str = f"Context: {example['ctx']}\nCorrect Ending: {correct_ending}\n---\n"
+            # example_str = f"Context: {example['ctx']}\nCorrect Ending: {correct_ending}\n---\n"
+            example_str = f"{example['ctx']} {correct_ending}\n---\n"
             few_shot_prompt.append(example_str)
         few_shot_prompt = "".join(few_shot_prompt)
     else:
         few_shot_prompt = ""
-
-    print("few_shot_prompt: ", few_shot_prompt)
 
     base_prompt = start_text + few_shot_prompt
 
@@ -73,12 +73,13 @@ def evaluate_hellaswag_few_shot(model, encode, device, few_shot_examples, start_
 
     # Iterate over the evaluation dataset
     for idx in eval_indices:
-        example = ds[idx]
+        example = ds[int(idx)]
         endings = example['endings']
         label = example['label']
 
         # Construct the prompt for this instance
-        instance_prompt = base_prompt + f"Context: {example['cxt']}\n"
+        # instance_prompt = base_prompt + f"Context: {example['ctx']}\n"
+        instance_prompt = base_prompt + f"{example['ctx']}"
         instance_tokens = torch.tensor(encode(instance_prompt), dtype=torch.long, device=device).unsqueeze(0)
 
         # Compute log-probabilities for each ending
@@ -92,7 +93,10 @@ def evaluate_hellaswag_few_shot(model, encode, device, few_shot_examples, start_
 
         # Predicted = argmax of scores
         predicted = np.argmax(scores)
-        if predicted == label:
+        print("scores: ", scores)
+        print("predicted: ", predicted)
+        print("label: ", label)
+        if int(predicted) == int(label):
             correct += 1
         total += 1
 
