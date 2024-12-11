@@ -354,4 +354,4 @@ class HuggingFaceTokenizer(Tokenizer):
         Returns:
             str: Decoded string.
         """
-        return self.tokenizer.decode(ids, skip_special_tokens=True)
+        return self.tokenizer.decode(ids)
