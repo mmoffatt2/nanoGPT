@@ -18,7 +18,7 @@ from collections import OrderedDict
 from model import GPT, GPTConfig
 from model_info_util.model_info import print_summary, print_module_structure, print_model_blocks
 from variations.model_variations import model_variation_dictionary
-from hellaswag import evaluate_hellaswag_few_shot
+from benchmarking.hellaswag import evaluate_hellaswag_few_shot
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference from trained models")
@@ -249,7 +249,7 @@ def main():
         gptconf = GPTConfig()
         variation_dict = model_variation_dictionary[args.init_from]
         for k in variation_dict:
-            gptconf[k] = variation_dict[k]
+            setattr(gptconf, k, variation_dict[k])
         model = GPT.from_pretrained(gptconf, model_type=args.init_from)
 
     # Load meta information if available
@@ -266,6 +266,12 @@ def main():
             if os.path.exists(meta_path):
                 load_meta = True
                 break
+
+    elif args.init_from.startswith("gpt2"):
+        enc = tiktoken.get_encoding("gpt2")
+        print(f"using tiktoken encoding gpt2")
+        encode = lambda s: enc.encode(s, allowed_special={""})
+        decode = lambda l: enc.decode(l)
 
     if load_meta:
         print(f"Loading meta from {meta_path}...")
