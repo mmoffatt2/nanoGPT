@@ -7,3 +7,6 @@
 [submodule "modules/llm.c"]
 	path = modules/llm.c
 	url = https://github.com/karpathy/llm.c.git
+[submodule "third-party/executorch"]
+	path = third-party/executorch
+	url = https://github.com/pytorch/executorch.git
