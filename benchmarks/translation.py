@@ -1,4 +1,3 @@
-# translation.py
 import os
 import time
 import torch
@@ -38,12 +37,12 @@ def get_few_shot_examples(dataset_name, source_lang, target_lang, num_examples=1
     examples = [(ex['translation'][source_lang], ex['translation'][target_lang]) for ex in dataset][:num_examples]
     return examples
 
-def translate_batch(model, dataset, encode, decode, source_texts, source_lang, target_lang, device, max_length=40):
+def translate_batch(model, dataset_name, encode, decode, source_texts, source_lang, target_lang, device, max_length=40):
     """
     Translate a batch of source texts using GPT-2 few-shot prompting.
     """
     model.eval()
-    few_shot_examples = get_few_shot_examples(dataset, source_lang, target_lang, num_examples=10)
+    few_shot_examples = get_few_shot_examples(dataset_name, source_lang, target_lang, num_examples=10)
 
     translations = []
     for text in source_texts:
@@ -52,7 +51,6 @@ def translate_batch(model, dataset, encode, decode, source_texts, source_lang, t
 
         with torch.no_grad():
             output = model.generate_with_stop(input_ids, max_length, "French", decode)
-            output = decode(output)
 
         raw_output = output[1]
 
@@ -62,14 +60,14 @@ def translate_batch(model, dataset, encode, decode, source_texts, source_lang, t
 
     return translations
 
-def evaluate_translation(model, encode, decode, dataset, source_lang, target_lang, device):
+def evaluate_translation(model, dataset_name, encode, decode, dataset, source_lang, target_lang, device):
     """
     Evaluate a translation model using BLEU score.
     """
     source_texts = [example['translation'][source_lang] for example in dataset][:100]
     reference_texts = [[example['translation'][target_lang]] for example in dataset][:100]
 
-    translations = translate_batch(model, dataset, encode, decode, source_texts, source_lang, target_lang, device)
+    translations = translate_batch(model, dataset_name, encode, decode, source_texts, source_lang, target_lang, device)
 
     f = [i for s in reference_texts for i in s]
     for t, ref in zip(translations, f):
@@ -89,7 +87,7 @@ def benchmark_translation(model, encode, decode, dataset_name, source_lang, targ
 
     print("Evaluating translations...")
     start_time = time.time()
-    bleu_score = evaluate_translation(model, encode, decode, dataset, source_lang, target_lang, device)
+    bleu_score = evaluate_translation(model, dataset_name, encode, decode, dataset, source_lang, target_lang, device)
     end_time = time.time()
 
     print(f"BLEU Score: {bleu_score:.2f}")
