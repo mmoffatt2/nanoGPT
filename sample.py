@@ -18,7 +18,7 @@ from collections import OrderedDict
 from model import GPT, GPTConfig
 from model_info_util.model_info import print_summary, print_module_structure, print_model_blocks
 from variations.model_variations import model_variation_dictionary
-from translation import benchmark_translation
+from benchmarks.translation import benchmark_translation
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference from trained models")
