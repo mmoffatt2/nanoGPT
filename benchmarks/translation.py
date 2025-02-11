@@ -9,67 +9,73 @@ from datasets import load_dataset
 def load_translation_dataset(dataset_name, source_lang, target_lang, split="test"):
     """
     Load a translation dataset using Hugging Face's datasets library.
-    
-    Args:
-        dataset_name (str): Name of the dataset (e.g., "wmt24", "wmt23").
-        source_lang (str): Source language code (e.g., "en").
-        target_lang (str): Target language code (e.g., "de").
-        split (str): Split of the dataset to use (default: "test").
-
-    Returns:
-        Dataset: A Hugging Face Dataset object containing the translation examples.
     """
     dataset = load_dataset(dataset_name, f"{source_lang}-{target_lang}", split=split)
     return dataset
 
-def translate_batch(model, encode, decode, source_texts, device, max_length=100):
+def construct_few_shot_prompt(source_text, few_shot_examples):
     """
-    Translate a batch of source texts using the given model.
-
+    Construct a few-shot prompt for translation.
+    
     Args:
-        model: The translation model.
-        encode: Function to encode text into input IDs.
-        decode: Function to decode output IDs into text.
-        source_texts (list of str): List of source texts to translate.
-        device (str): The device to run inference on.
-        max_length (int): Maximum token length for translations (default: 100).
-
+        source_text (str): The sentence to translate.
+        few_shot_examples (list of tuples): List of (source, target) translation pairs.
+    
     Returns:
-        list of str: List of translated texts.
+        str: The formatted prompt for GPT-2.
+    """
+    prompt = ""
+    for src, tgt in few_shot_examples:
+        prompt += f"French: {src}\nEnglish: {tgt}\n\n"
+    prompt += f"French: {source_text}\nEnglish:"
+    return prompt
+
+def get_few_shot_examples(dataset_name, source_lang, target_lang, num_examples=10):
+    """
+    Fetch real translation examples from the dataset.
+    """
+    dataset = load_translation_dataset(dataset_name, source_lang, target_lang, split="validation")
+    examples = [(ex['translation'][source_lang], ex['translation'][target_lang]) for ex in dataset][:num_examples]
+    return examples
+
+def translate_batch(model, dataset, encode, decode, source_texts, source_lang, target_lang, device, max_length=40):
+    """
+    Translate a batch of source texts using GPT-2 few-shot prompting.
     """
     model.eval()
-    inputs = [encode(text) for text in source_texts]
-    input_ids = torch.tensor(inputs, dtype=torch.long, device=device)
-    with torch.no_grad():
-        outputs = model.generate(input_ids, max_length=max_length, num_beams=5)
-    return [decode(output.tolist()) for output in outputs]
+    few_shot_examples = get_few_shot_examples(dataset, source_lang, target_lang, num_examples=10)
+
+    translations = []
+    for text in source_texts:
+        prompt = construct_few_shot_prompt(text, few_shot_examples)
+        input_ids = torch.tensor(encode(prompt), dtype=torch.long).unsqueeze(0).to(device)
+
+        with torch.no_grad():
+            output = model.generate_with_stop(input_ids, max_length, "French", decode)
+            output = decode(output)
+
+        raw_output = output[1]
+
+        # Extract translation by removing prompt
+        translated_text = raw_output.replace(prompt, "").strip().split("\n")[0]
+        translations.append(translated_text)
+
+    return translations
 
 def evaluate_translation(model, encode, decode, dataset, source_lang, target_lang, device):
     """
     Evaluate a translation model using BLEU score.
-
-    Args:
-        model: The translation model.
-        encode: Function to encode text into input IDs.
-        decode: Function to decode output IDs into text.
-        dataset: The translation dataset.
-        source_lang (str): Source language code.
-        target_lang (str): Target language code.
-        device (str): The device to run inference on.
-
-    Returns:
-        float: BLEU score of the model's translations.
     """
-    source_texts = [example[source_lang] for example in dataset]
-    reference_texts = [[example[target_lang]] for example in dataset]
+    source_texts = [example['translation'][source_lang] for example in dataset][:100]
+    reference_texts = [[example['translation'][target_lang]] for example in dataset][:100]
 
-    translations = []
-    batch_size = 16
+    translations = translate_batch(model, dataset, encode, decode, source_texts, source_lang, target_lang, device)
 
-    for i in range(0, len(source_texts), batch_size):
-        batch = source_texts[i:i + batch_size]
-        translated_batch = translate_batch(model, encode, decode, batch, device)
-        translations.extend(translated_batch)
+    f = [i for s in reference_texts for i in s]
+    for t, ref in zip(translations, f):
+        print("translated text: ", t)
+        print("reference text: ", ref)
+        print("------------------------------")
 
     bleu = corpus_bleu(translations, reference_texts)
     return bleu.score
@@ -77,18 +83,6 @@ def evaluate_translation(model, encode, decode, dataset, source_lang, target_lan
 def benchmark_translation(model, encode, decode, dataset_name, source_lang, target_lang, device):
     """
     Benchmark translation performance on a specific dataset.
-
-    Args:
-        model: The translation model.
-        encode: Function to encode text into input IDs.
-        decode: Function to decode output IDs into text.
-        dataset_name (str): Name of the translation dataset (e.g., "wmt24").
-        source_lang (str): Source language code.
-        target_lang (str): Target language code.
-        device (str): The device to run inference on.
-
-    Returns:
-        float: BLEU score of the model's translations.
     """
     print(f"Loading dataset {dataset_name} ({source_lang} -> {target_lang})...")
     dataset = load_translation_dataset(dataset_name, source_lang, target_lang)
