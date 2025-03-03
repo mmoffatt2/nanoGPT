@@ -1,6 +1,6 @@
 # OLMo Fine-Tuning with Custom Attention
 
-This script fine-tunes the pre-trained OLMo model using a custom attention variant. Currently, it supports the attention variants: clipped, relu, relu_norm, gated, softplus, softplus_norm, sigmoid, sigmoid_norm, obo, and learned_obo. It fine-tunes using the Wikitext-2 dataset for 20000 steps. 
+This script fine-tunes the pre-trained OLMo model using a custom attention variant. Currently, it supports the attention variants: clipped softmax, ReLU, normalized ReLU, gated softmax, softplus, normalized softplus, sigmoid, normalized sigmoid, off-by-one, and learned off-by-one softmax. It fine-tunes using the Wikitext-2 dataset for 20000 steps. 
 
 ## Usage
 
