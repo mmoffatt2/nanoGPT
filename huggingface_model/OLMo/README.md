@@ -5,5 +5,5 @@ This script fine-tunes the pre-trained OLMo model using a custom attention varia
 ## Usage
 
 ```bash
-python3 OLMo_train.py --model_variant <variant>
+python3 OLMo_train.py --model_variant <variant> --lr <learning rate> --weight_decay <weight_decay> --max_steps <max training steps> --eval_steps <steps before evaluation> --save_steps <steps before saving model checkpoint>
 ```

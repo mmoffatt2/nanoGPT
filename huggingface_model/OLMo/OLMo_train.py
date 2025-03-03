@@ -1,7 +1,7 @@
 import argparse
 from transformers import AutoTokenizer, OlmoForCausalLM, TrainingArguments, Trainer, DataCollatorForLanguageModeling
 from datasets import load_dataset
-from huggingface_model.OLMo.OLMo_model import apply_custom_attention
+from OLMo_model import apply_custom_attention
 
 def main():
     parser = argparse.ArgumentParser(description="Fine-tune Olmo with custom attention.")
@@ -12,6 +12,11 @@ def main():
         default="relu",
         help="Select which attention variant to use."
     )
+    parser.add_argument("--lr", type=float, default=2e-5, help="Select learning rate.")
+    parser.add_argument("--weight_decay", type=float, default=0.01, help="Select weight decay.")
+    parser.add_argument("--max_steps", type=int, default=20000, help="Total number of training steps.")
+    parser.add_argument("--eval_steps", type=int, default=500, help="Number of steps before an evaluation is done on the eval dataset")
+    parser.add_argument("--save_steps", type=int, default=10000, help="Number of steps before a checkpoint is created")
     args = parser.parse_args()
 
     # Load the pretrained model and tokenizer.
@@ -77,16 +82,16 @@ def main():
     training_args = TrainingArguments(
         output_dir="./olmo-" + args.model_variant,
         eval_strategy="steps",
-        eval_steps=500,
-        learning_rate=2e-5,
+        eval_steps=args.eval_steps,
+        learning_rate=args.lr,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
         # num_train_epochs=3,
-        weight_decay=0.01,
+        weight_decay=args.weight_decay,
         save_total_limit=3,
-        max_steps=20000,
-        save_steps=10000,
+        max_steps=args.max_steps,
+        save_steps=args.save_steps,
         logging_dir="./logs",
         logging_steps=100,
         fp16=True,
