@@ -1,3 +1,4 @@
+# gpt_conf.py
 from dataclasses import dataclass, field, asdict, fields
 from typing import List
 import json
@@ -5,12 +6,16 @@ import math
 
 @dataclass
 class GPTConfig:
+    attention_list: List[str] = field(default_factory=lambda: [])
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
     n_head: int = 12
     n_kv_group: int = 12
     n_embd: int = 768
+
+    # Attention Variation Spedcific
+    n_head_dim: int = None # For Infinite Attention variation
 
     # Steering Vectors
     ## Where to intercept
@@ -69,6 +74,16 @@ class GPTConfig:
 
     ## Flash attention
     disable_flash_attention: bool = False
+
+    # Attention Options
+    attention_variant: str = "causal"
+
+    ## SSM - Attention Varient (same as Hymba)
+    ssm_mamba_expand: int = 2
+    ssm_conv_kernel_size: int = 3
+    ssm_dt_rank: int = 8
+    ssm_d_state: int = 16
+    ssm_io_bias: bool = True
 
     # MLP Options
     use_parallel_mlp: bool = False
@@ -140,6 +155,7 @@ class GPTConfig:
 
     strongermax_obo: float = 0.0
     strongermax_use_learned_obo: bool = False
+    strongermax_use_learned_obo_per_head: bool = False
 
     strongermax_temperature_factor: float = 1.0
     strongermax_use_learned_temperature_factor: bool = False
@@ -200,6 +216,16 @@ class GPTConfig:
     krmsnorm_enable_gain: bool = True
     krmsnorm_selection_type: str = 'last'
     krmsnorm_recompute_percentage: float = 0.05
+    hsnorm_gain: bool = False
+    hsnorm_radius: float = 1.0
+    hsnorm_radius_learning: bool = False
+
+    dact_alpha_init: float = 1.0
+    dact_activation: str = 'tanh'
+    dact_use_gamma: bool = True
+    dact_use_beta: bool = True
+    dact_use_alpha: bool = True
+    use_embedding_scale: bool = False
 
     # Activation Alternatives
 
@@ -241,6 +267,9 @@ class GPTConfig:
     ## Linear Initialization Options
     linear_mean_init: float= 0.0
     linear_std_init: float= 0.02
+
+    ## Embedding initialization options
+    init_variant: str = None
 
     # Quantizations
     start_quant_level: float = 0

@@ -1,3 +1,4 @@
+# train.py
 import argparse
 from contextlib import nullcontext
 import csv
@@ -10,23 +11,36 @@ import shutil
 import sys
 import time
 
-from model_info_util.model_info import print_summary, print_module_structure, print_model_blocks, print_model_tree
-from monitoring_util.gpu_monitoring import get_gpu_memory_info
+import torch.onnx
 
-from rich.progress import Progress
-
-import matplotlib.pyplot as plt
-import numpy as np
-import plotly.graph_objects as go
-import torch
-from torch.distributed import destroy_process_group, init_process_group
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.utils.tensorboard import SummaryWriter
-from statistics_util.statistic_plots import (
+from utils.gpu_monitoring import get_gpu_memory_info
+from utils.model_info import (
+    print_summary,
+    print_module_structure,
+    print_model_blocks,
+    print_model_tree,
+)
+from utils.statistic_plots import (
     initialize_statistics,
     plot_statistics,
     create_statistics,
 )
+
+
+from sample import sample_with_existing_model
+
+from rich.progress import Progress
+
+# GNS Related
+import utils.gns_monitoring.gns_utils as gns_utils
+from utils.gns_monitoring.hook import (add_hooks_to_model, add_sogns_hooks,
+                   add_exact_hooks,  gather_hook_results)
+
+import numpy as np
+import torch
+from torch.distributed import destroy_process_group, init_process_group
+from torch.nn.parallel import DistributedDataParallel as DDP
+from torch.utils.tensorboard import SummaryWriter
 from variations.model_variations import model_variation_dictionary
 
 from model import GPT, GPTConfig
@@ -34,515 +48,8 @@ from model import GPT, GPTConfig
 # Inference related imports
 import tiktoken
 
-def parse_args():
+from train_args import parse_args
 
-    parser = argparse.ArgumentParser()
-
-    # argparse groups
-    model_group = parser.add_argument_group('model_group')
-    training_group = parser.add_argument_group('training_group')
-    logging_group = parser.add_argument_group('logging_group')
-
-    # Export Args
-    ## Factored WTE
-    model_group.add_argument('--import_wte_npy', default=None, type=str, help='Path to import the embedding table as a .npy file')
-    model_group.add_argument('--export_wte_npy', default=None, type=str, help='Path to export the embedding table as a .npy file')
-    model_group.add_argument('--export_wte_each_eval', default=False, action=argparse.BooleanOptionalAction, help="Requires --export_wte is not None. If this is so, will always export embedding to numpy after evaluation")
-    model_group.add_argument('--import_wte_freeze', default=False, action=argparse.BooleanOptionalAction, help="Whether to freeze an imported wte")
-
-    ## Factored Scale Matrices
-    model_group.add_argument('--import_scale_matrices_npz', default=None, type=str, help='Path to import the scale matrices as a .npz file')
-    model_group.add_argument('--export_scale_matrices_npz', default=None, type=str, help='Path to export the scale matrices as a .npz file')
-    model_group.add_argument('--export_scale_matrices_each_eval', default=False, action=argparse.BooleanOptionalAction, help="Requires --export_scale_matrices_npz is not None. If this is so, will always export to npz after evaluation")
-    model_group.add_argument('--import_scale_matrices_freeze', default=False, action=argparse.BooleanOptionalAction, help="Whether to freeze scaled_matrices")
-
-    # I/O args
-    training_group.add_argument('--out_dir', default='out', type=str)
-    training_group.add_argument('--eval_interval', default=250, type=int)
-    training_group.add_argument('--log_interval', default=10, type=int)
-    training_group.add_argument('--eval_iters', default=200, type=int)
-    training_group.add_argument('--eval_only', default=False, action=argparse.BooleanOptionalAction)
-
-    # Loss variations
-    training_group.add_argument('--focus_on_top1_loss', default=False, action=argparse.BooleanOptionalAction)
-
-    # Sample args
-    training_group.add_argument('--max_sample_tokens', default=None, type=int, help="If set, maximum number of tokens to sample and print after each validation loss")
-    training_group.add_argument('--sample_each_eval', default=False, action=argparse.BooleanOptionalAction, help="Produce sample even if the validation loss did not improve. Allows for testing what overtraining looks like.")
-    training_group.add_argument('--sample_start_tokens', default='\n', type=str)
-    training_group.add_argument('--sample_only', default=False, action=argparse.BooleanOptionalAction, help="Run only the sampling process and exit")
-
-    # Checkpoint args
-    training_group.add_argument('--save_major_ckpt_interval', default=None, type=int, help="Interval for saving major checkpoints.")
-    training_group.add_argument('--only_save_checkpoint_at_end', default=False, action=argparse.BooleanOptionalAction)
-    training_group.add_argument('--always_save_checkpoint', default=False, action=argparse.BooleanOptionalAction)
-    training_group.add_argument('--patience', default=None, type=int, help="if set, will stop training if the number of evaluations since val loss was seen to decrease exceeds 'patience' setting.")
-    training_group.add_argument('--init_from', default='scratch', choices=['scratch', 'prev_run', 'resume', 'gpt2'], type=str)
-    training_group.add_argument('--gpt2_type', default='gpt2', type=str)
-    training_group.add_argument('--prev_run_ckpt', default='', type=str)
-    training_group.add_argument('--csv_ckpt_dir', default='', type=str)
-    training_group.add_argument('--init_from_ckpt', default='ckpt.pt', type=str, help="if save_major_ckpt_interval was set, can use to init from specific ckpts")
-
-    # Data args
-    training_group.add_argument('--dataset', default='shakespeare_char', type=str)
-    training_group.add_argument('--batch_size', default=64, type=int)
-    training_group.add_argument("--seed", default=1337, type=int)
-
-    # Add a new argument for specifying multiple datasets
-    training_group.add_argument('--dataset_list', default=None, nargs='+', type=str, help="If not None, training will be done from a list of datasets to train on, e.g. --dataset_list shakespeare wikitext103 openwebtext")
-    training_group.add_argument('--dataset_interleaving', default=False, action=argparse.BooleanOptionalAction)
-    training_group.add_argument('--dataset_interleaving_shuffle', default=False, action=argparse.BooleanOptionalAction)
-    training_group.add_argument('--dataset_sampling_learning_rate', default=None, nargs='+', type=float, help="Sampling learning rates for each dataset in dataset_list.")
-    training_group.add_argument('--dataset_sampling_probs', default=None, nargs='+', type=float, help="Sampling proportions for each dataset in dataset_list. Probabilities normally but proportions in dataset_interleaving")
-    training_group.add_argument('--dataset_sampling_probs_final', default=None, nargs='+', type=float, help="If, set final sampling probabilities for each dataset in dataset_list.")
-    training_group.add_argument('--dataset_sampling_probs_transition_method', default=None, type=str, choices=["linear", "cosine", "exponential"])
-
-
-    # Model args
-    model_group.add_argument('--block_size', default=256, type=int)
-    model_group.add_argument('--n_layer', default=6, type=int)
-    model_group.add_argument('--n_head', default=6, type=int)
-    model_group.add_argument('--n_kv_group', default=None, type=int)
-    model_group.add_argument('--n_embd', default=384, type=int, help="Size of embeddings in decoder layer and wte unless n_embd_wte is set." )
-    model_group.add_argument('--n_embd_wte', default=None, type=int, help="If different from n_embd, an adapter table will be automatically created")
-    model_group.add_argument('--n_embd_wte_scale_tying', default=True, action=argparse.BooleanOptionalAction, help="Enable weight tying for scale up and scale down matrices, only has effects if n_embd_wte is not 'None'.")
-    model_group.add_argument('--dropout', default=0.2, type=float)
-    model_group.add_argument('--use_post_ln', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--window_size', default=None, type=int, help="Sliding window size, note this cannot be greater than block size")
-    model_group.add_argument('--gate', default=False, action=argparse.BooleanOptionalAction, help="option for gated attention see https://arxiv.org/abs/2306.12929")
-    model_group.add_argument('--use_moe', default=False,  action=argparse.BooleanOptionalAction, help="option for Mixture of Experts (MoE) architecture")
-    model_group.add_argument('--moe_layer_freq', default=2, type=int, help="set frequency for replacing FFNs with MoE layers")
-    model_group.add_argument('--n_experts', default=8, type=int, help="set number of experts per MoE layer")
-    model_group.add_argument('--moe_top_k', default=2, type=int)
-    model_group.add_argument('--moe_router_scheme', default="softmax", type=str, help="option to set routing scheme for MoE layer, defaults to softmax")
-    model_group.add_argument('--use_flex_attn', default=None,  action=argparse.BooleanOptionalAction, help="option for using flex attention for sliding windows")
-
-
-    ## Manual Steering Vector Options
-
-    ### Applying Steering Vectors
-    model_group.add_argument('--apply_vector_at_layer_idx', default=None, type=int)
-    model_group.add_argument("--apply_vector_file", type=str, default=None, help="single vector to apply with scaling factor")
-    model_group.add_argument("--apply_vector_scaling_factor", type=float, default=1.0, help="scaling factor to apply to steering vector")
-
-    ### Options for intercepting and obtaining vectors
-    model_group.add_argument('--obtain_vector_at_layer_idx', default=None, type=int)
-    model_group.add_argument("--obtain_vector_file", type=str, default=None, help="initial KAN activation")
-
-    ## Learned Steering Vector (LSV) Options
-    lsv_variations = [
-            "one_hot",
-            "linear_comb",
-            "one_hot_mlp",
-            "ohmg",
-            "ohmt",
-            "ohmm",
-            "ohma",
-            "ohmgu",
-            "ohmh",
-            "mol",
-        ]
-    model_group.add_argument("--use_lsv", default=False, action=argparse.BooleanOptionalAction, help="whether to use Learned Steering Vectors")
-    model_group.add_argument("--lsv_index", default=None, type=int, help="Which steering vector to use")
-    model_group.add_argument("--lsv_variant", default="one_hot", type=str, choices=lsv_variations, help="Which steering vector to use")
-    model_group.add_argument('--apply_lsv_at_layer_idx', default=None, type=int)
-
-    training_group.add_argument("--lsv_focused_training", default=False, action=argparse.BooleanOptionalAction, help="train but only unfreeze lsv")
-
-    ## MLP Options
-    model_group.add_argument('--use_parallel_mlp', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--mlp_variant", type=str, default="mlp", choices=["mlp", "kan", "swiglu"], help="MLP variation type")
-    model_group.add_argument("--mlp_expansion_factor", type=int, default=4, help="If MLP like variant is used, set the expansion factor for the linear transformations, default is 4.")
-
-    ## KAN Options
-    model_group.add_argument("--kan_poly_order", type=int, default=3, help="Order of KAN non-linearity")
-    model_group.add_argument("--kan_base_activation", type=str, default="silu", help="initial KAN activation")
-    model_group.add_argument("--kan_middle_layers", type=int, nargs='+', help="List of integers", default=[])
-
-    # Shared Parameter Settings
-    model_group.add_argument('--shared_mlp_size', default=1, type=int, help="every 'k' contiguous blocks of mlp are shared")
-    model_group.add_argument('--shared_mlp_sym', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--shared_attn_size', default=1, type=int, help="every 'k' contiguous blocks of attn are shared")
-    model_group.add_argument('--shared_attn_sym', default=False, action=argparse.BooleanOptionalAction, help="symmetrical attention sharing")
-
-    # NORM VARIATIONS
-    model_group.add_argument("--norm_variant_attn", type=str, default="rmsnorm", choices=["krmsnorm", "prmsnorm", "rmsnorm", "layernorm"])
-    model_group.add_argument("--norm_variant_output", type=str, default="rmsnorm", choices=["krmsnorm", "prmsnorm", "rmsnorm", "layernorm"])
-    model_group.add_argument('--bias', default=False, action=argparse.BooleanOptionalAction, help="only used for layernorm variation option")
-    model_group.add_argument("--prmsnorm_pct", default=0.0625, type=float, help="percentage (1 being 100 percent) of first entries used for partial rms" )
-    model_group.add_argument("--krmsnorm_num", default=10, type=int, help="max number of first entries for partial rms" )
-    model_group.add_argument("--krmsnorm_quantize_type", type=str, default="none", choices=["int8", "int16", "none"])
-    model_group.add_argument('--krmsnorm_enable_gain', default=True, action=argparse.BooleanOptionalAction, help="include gain in kRMSNorm")
-    model_group.add_argument("--krmsnorm_selection_type", type=str, default="last", choices=["first", "last", "random"])
-    model_group.add_argument("--krmsnorm_recompute_percentage", type=float, default=None, help="percentage needed within the total RMS to not trigger recompute")
-
-    activation_variations = [
-            "celu",
-            "elu",
-            "gelu",
-            "gelu_shifted",
-            "glu",
-            "leaky_relu",
-            "learned_spline",
-            "mish",
-            "piecewise",
-            "pfla",
-            "pfla_le",
-            "prelu",
-            "relu",
-            "relu6",
-            "rrelu",
-            "selu",
-            "sigmoid",
-            "silu",
-            "softplus",
-            "softsign",
-            "squared_relu",
-            "tanh",
-        ]
-
-    # ACTIVATION VARIATIONS
-    model_group.add_argument( "--activation_variant", type=str, default="gelu", choices=activation_variations)
-
-    ## Shifted Gelu
-    model_group.add_argument("--shifted_gelu_learnable_shift",  type=bool, default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--shifted_gelu_initial_shift", type=float, default=0.0)
-
-    ## PiecewiseLearnableActivation - pla
-    model_group.add_argument("--pla_num_points", type=int, default=7)
-    model_group.add_argument("--pla_left_bound", type=float, default=-2.0)
-    model_group.add_argument("--pla_right_bound", type=float, default=2.0)
-
-    ## PiecewiseFullyLearnableActivation - pfla
-    model_group.add_argument("--pfla_num_points", type=int, default=200)
-    model_group.add_argument("--pfla_left_bound", type=float, default=-100.0)
-    model_group.add_argument("--pfla_right_bound", type=float, default=100.0)
-
-    ## PiecewiseFullyLearnableActivationLearnedEnds - pflale
-    model_group.add_argument("--pfla_le_num_points",   type=int,  default=30)
-    model_group.add_argument("--pfla_le_left_bound",  type=float, default=-10.0)
-    model_group.add_argument("--pfla_le_right_bound", type=float, default=10.0)
-
-    ## LearnedSplineActivation - lsa
-    model_group.add_argument("--lsa_num_knots", type=int, default=30)
-
-    # LINEAR VARIATIONS
-    linear_variants = ["linear", "bitlinear", "bitlinear_1p58", "bitlinear_optimized", "kan","quantized_linear"]
-    model_group.add_argument("--linear_variant_attn", type=str, default="linear", choices=linear_variants)
-    model_group.add_argument("--linear_variant_q", type=str, default=None, choices=linear_variants, help="sets the linear variant for c_attn_q in attention (takes precedence over linear_variant_attn)")
-    model_group.add_argument("--linear_variant_k", type=str, default=None, choices=linear_variants, help="sets the linear variant for c_attn_k in attention (takes precedence over linear_variant_attn)")
-    model_group.add_argument("--linear_variant_v", type=str, default=None, choices=linear_variants, help="sets the linear variant for c_attn_v in attention (takes precedence over linear_variant_attn)")
-    model_group.add_argument("--linear_variant_attn_proj", type=str, default=None, choices=linear_variants, help="sets the linear variant for c_proj in attention (takes precedence over linear_variant_attn)")
-    model_group.add_argument("--linear_variant_mlp", type=str, default="linear", choices=linear_variants)
-    model_group.add_argument("--linear_variant_mlp_up", type=str, default=None, choices=linear_variants, help="sets the linear variant for c_fc in mlp (takes precedence over linear_variant_mlp)")
-    model_group.add_argument("--linear_variant_mlp_down", type=str, default=None, choices=linear_variants, help="sets the linear variant for c_proj in mlp (takes precedence over linear_variant_mlp)")
-    ## Linear Weight Initialization Options
-    model_group.add_argument( "--linear_mean_init", type=float, default=0.0)
-    model_group.add_argument( "--linear_std_init", type=float, default=0.02)
-
-    # Quantization
-    model_group.add_argument("--full_quant_iteration", type=int, default=None,
-                             help="The iteration where the model reaches full quantization. The increase from start_quant_level to full quantization is determined by the quant_scheduler.")
-    model_group.add_argument("--start_quant_level", type=float, default=0.0,
-                             help="Starting level of quantization. A quant level of 0 means that there is no quantization is occurring. A quant level of 1 is full quantization.")
-    model_group.add_argument("--quant_scheduler", type=str, default=None, choices=["static", "linear"],
-                             help="Scheduler for change in quant level. When linear is set, the quantization will increase dynamically based on the training step")
-
-    ## Quantization Method Options
-    quant_methods = ["ternary_quant", "symmetric_quant", "affine_quant", "stochastic_quant"]
-
-    ## WTE
-    model_group.add_argument("--quantize_wte", default=None, action=argparse.BooleanOptionalAction, help="Whether the word embedding is quantized")
-    model_group.add_argument("--quantize_wte_method", type=str, default="affine_quant", choices=quant_methods, help="function used for word embedding quantization")
-    model_group.add_argument("--quantize_wte_bits", type=int, default=8, help="number of bits for word embedding quantization")
-
-    ## WPE
-    model_group.add_argument("--quantize_wpe", default=None, action=argparse.BooleanOptionalAction, help="Whether the word position embedding is quantized")
-    model_group.add_argument("--quantize_wpe_method", type=str, default="affine_quant", choices=quant_methods, help="function used for position embedding quantization")
-    model_group.add_argument("--quantize_wpe_bits", type=int, default=8, help="number of bits for position embedding quantization")
-
-    ## Activations
-    model_group.add_argument("--activations_quant_method", type=str, default="affine_quant", choices=quant_methods, help="function used for quantization of activations")
-
-    ### Attention Activations
-    model_group.add_argument("--quantize_attn_act", action=argparse.BooleanOptionalAction, default=False, help="quantize all input/output activations in attn")
-
-    #### Whether to do Attention Activation quantization at the Arrow
-    model_group.add_argument("--quantize_attn_act_input", action=argparse.BooleanOptionalAction, default=False, help="quantize input activation to attention")
-    model_group.add_argument("--quantize_attn_act_qk_mult_q_input", action=argparse.BooleanOptionalAction, default=False, help="quantize query input activation to qk mult")
-    model_group.add_argument("--quantize_attn_act_qk_mult_k_input", action=argparse.BooleanOptionalAction, default=False, help="quantize key input activation to qk mult")
-    model_group.add_argument("--quantize_attn_act_softmax_input", action=argparse.BooleanOptionalAction, default=False, help="quantize input activation to softmax")
-    model_group.add_argument("--quantize_attn_act_pv_mult_p_input", action=argparse.BooleanOptionalAction, default=False, help="quantize softmax input activation to pv mult")
-    model_group.add_argument("--quantize_attn_act_pv_mult_v_input", action=argparse.BooleanOptionalAction, default=False, help="quantize value input activation to pv mult")
-    model_group.add_argument("--quantize_attn_act_pv_mult_output", action=argparse.BooleanOptionalAction, default=False, help="quantize output activation of pv_mult")
-    model_group.add_argument("--quantize_attn_act_output", action=argparse.BooleanOptionalAction, default=False, help="quantize output activation of attention")
-
-    ### Default Precisions for Attention Activations
-    model_group.add_argument("--quantize_attn_act_bits", type=int, default=8, help="number of bits for attn quantization")
-
-    ### Overrides for granular Attention Activatinos
-    model_group.add_argument("--quantize_attn_act_input_bits", type=int, default=None, help="number of bits for attention input quantization")
-    model_group.add_argument("--quantize_attn_act_qk_mult_q_input_bits", type=int, default=None, help="number of bits for qk mult query input quantization")
-    model_group.add_argument("--quantize_attn_act_qk_mult_k_input_bits", type=int, default=None, help="number of bits for qk mult key input quantization")
-    model_group.add_argument("--quantize_attn_act_softmax_input_bits", type=int, default=None, help="number of bits for softmax input quantization")
-    model_group.add_argument("--quantize_attn_act_pv_mult_p_input_bits", type=int, default=None, help="number of bits for pv mult softmax input quantization")
-    model_group.add_argument("--quantize_attn_act_pv_mult_v_input_bits", type=int, default=None, help="number of bits for pv mult value input quantization")
-    model_group.add_argument("--quantize_attn_act_pv_mult_output_bits", type=int, default=None, help="number of bits for pv mult output quantization")
-    model_group.add_argument("--quantize_attn_act_output_bits", type=int, default=None, help="number of bits for attention output quantization")
-
-    ### Whether to use MLP Activations
-    model_group.add_argument("--quantize_mlp_act", action=argparse.BooleanOptionalAction, default=False, help="quantize all input/output activations in mlp")
-    model_group.add_argument("--quantize_mlp_act_input", action=argparse.BooleanOptionalAction, default=False, help="quantize input activation to mlp")
-    model_group.add_argument("--quantize_mlp_act_activation_input", action=argparse.BooleanOptionalAction, default=False, help="quantize input activation to activation function")
-    model_group.add_argument("--quantize_mlp_act_activation_output", action=argparse.BooleanOptionalAction, default=False, help="quantize output activation of activation function")
-    model_group.add_argument("--quantize_mlp_act_output", action=argparse.BooleanOptionalAction, default=False, help="quantize output activation of mlp")
-
-    ### Default Precisions for MLP Activations
-    model_group.add_argument("--quantize_mlp_act_bits", type=int, default=8, help="number of bits for mlp quantization")
-
-    ### Overrides for granular MLP Activatinos
-    model_group.add_argument("--quantize_mlp_act_input_bits", type=int, default=None, help="number of bits for mlp input quantization")
-    model_group.add_argument("--quantize_mlp_act_activation_input_bits", type=int, default=None, help="number of bits for activation function input quantization")
-    model_group.add_argument("--quantize_mlp_act_activation_output_bits", type=int, default=None, help="number of bits for activation function output quantization")
-    model_group.add_argument("--quantize_mlp_act_output_bits", type=int, default=None, help="number of bits for mlp output quantization")
-
-    ### Whether activations should be saved
-    model_group.add_argument("--store_activations", action=argparse.BooleanOptionalAction, default=False, help="whether the activations should be saved as a buffer and updated through training")
-
-    ## Linear Attn Weight Quantization Precision and Method
-
-    ### Default methods and precisions
-    model_group.add_argument("--quantize_linear_method", type=str, default="affine_quant", choices=quant_methods, help="function used for linear quantization")
-    model_group.add_argument("--quantize_linear_bits", type=int, default=8, help="number of bits for linear quantization")
-
-    #### Overrides for granular Methods and Precisions
-    model_group.add_argument("--quantize_linear_attn_q_method", type=str, default=None, choices=quant_methods, help="function used for c_attn_q quantization")
-    model_group.add_argument("--quantize_linear_attn_q_bits", type=int, default=None, help="number of bits for c_attn_q quantization")
-
-    model_group.add_argument("--quantize_linear_attn_k_method", type=str, default=None, choices=quant_methods, help="function used for c_attn_k quantization")
-    model_group.add_argument("--quantize_linear_attn_k_bits", type=int, default=None, help="number of bits for c_attn_k quantization")
-
-    model_group.add_argument("--quantize_linear_attn_v_method", type=str, default=None, choices=quant_methods, help="function used for c_attn_v quantization")
-    model_group.add_argument("--quantize_linear_attn_v_bits", type=int, default=None, help="number of bits for c_attn_v quantization")
-
-    model_group.add_argument("--quantize_linear_attn_proj_method", type=str, default=None, choices=quant_methods, help="function used for c_proj in attention quantization")
-    model_group.add_argument("--quantize_linear_attn_proj_bits", type=int, default=None, help="number of bits for c_proj in attention quantization")
-
-    #### Overrides for Linear MLP Weight Quantization Precision and Method
-    model_group.add_argument("--quantize_linear_mlp_up_method", type=str, default=None, choices=quant_methods, help="function used for mlp_up quantization")
-    model_group.add_argument("--quantize_linear_mlp_up_bits", type=int, default=None, help="number of bits for mlp_up quantization")
-    model_group.add_argument("--quantize_linear_mlp_down_method", type=str, default=None, choices=quant_methods, help="function used for mlp_down quantization")
-    model_group.add_argument("--quantize_linear_mlp_down_bits", type=int, default=None, help="number of bits for mlp_down quantization")
-
-    ## Quantized Linear Warmup Iterations -- how many to first use regular linear, before switching to quantized
-    model_group.add_argument("--quantization_warmup_iters", type=int, default=100)
-
-    # POSITIONAL EMBEDDING VARIATIONS
-    model_group.add_argument('--use_rotary_embeddings', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--sym_rot_num_angles', type=int, default=512, help="number of angles to use for symmetric rope variant")
-    model_group.add_argument("--rope_variant", type=str, default="rope", choices=["rope", "soap"])
-    model_group.add_argument("--rope_length", type=int, default=None, help="Defaults to all embeddings (if set to None), else must be even.")
-    model_group.add_argument('--use_abs_pos_embeddings', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--use_fire_embeddings', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--shared_fire_embeddings', default=False, action=argparse.BooleanOptionalAction)
-
-    ## Positional Embedding Weight Initialization Options
-    model_group.add_argument( "--embedding_mean_init", type=float, default=0.0)
-    model_group.add_argument( "--embedding_std_init", type=float, default=0.02)
-
-    ## FIRE Options (Functional Interpolation for Relative Positional Encoding)
-    model_group.add_argument( "--fire_log_bias", type=float, default=1.0, help="bias in the function psi(x) = log(cx + bias)")
-    model_group.add_argument( "--fire_num_hidden_layers", type=int, default=1, help="number of hidden layers (sigmas) in mlp in FIRE without counting outermost sigma")
-    model_group.add_argument( "--fire_mlp_width", type=int, default=32, help="mlp_width: one hidden dimension of linear layers in mlp in FIRE")
-    model_group.add_argument( "--fire_init_c", type=float, default=0.1, help="init_c: initial value of log transformation parameter c in FIRE")
-    model_group.add_argument( "--fire_init_L", type=float, default=512.0, help="init_L: initial value of threshold L in FIRE (fixed values without L_multiplier)")
-    model_group.add_argument( "--fire_outermost_sigma", type=bool, default=False, action=argparse.BooleanOptionalAction, help="whether or not adding outermost sigma in mlp in FIRE")
-
-    # SOFTMAX VARIATIONS
-    softmax_variations = [
-        "saturatingconsmax",
-        "consmax",
-        "consmax_v2",
-        "consmax_quan",
-        "polymax",
-        "relumax",
-        "relu2max",
-        "sigmoidmax",
-        "vpolymax",
-        "exppolymax",
-        "strongermax",
-        "softermax",
-        "sigsoftmax",
-        "softmax",
-        "softplus",
-        "squareplus",
-        "exppolymax",
-        ]
-
-    ## Selection of softmax variation for attention and output layers
-    model_group.add_argument("--softmax_variant_attn", type=str, default="softmax", choices=softmax_variations)
-    model_group.add_argument("--softmax_variant_output", type=str, default="softmax", choices=softmax_variations)
-    model_group.add_argument("--disable_flash_attention", default=False, action=argparse.BooleanOptionalAction, help="manual setting to disable flash attention")
-
-    ## Custom Softmax Variation Options
-    ### ConSmax and SaturatingConSmax Options
-    model_group.add_argument("--consmax_initial_beta", type=float, default=2.5)
-    model_group.add_argument("--consmax_initial_gamma", type=float, default=100.0)
-    model_group.add_argument('--consmax_use_euler_base', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--consmax_base", type=float, default=2.0)
-
-    ### Special Options for ConSmaxV2
-    model_group.add_argument("--consmax_per_head", default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--consmax_v2_clamping", default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--consmax_v2_clamp_value", type=float, default=80.0, help="maximum value to clamp inputs")
-
-    ### Special Options for SaturatingConSmax
-    model_group.add_argument("--consmax_saturation", type=float, default=11.0, help="point where we transition from consmax to linear saturatingconsmax, defaults to 11 to approximate e^x sat for fp16")
-    model_group.add_argument('--consmax_learnable_beta', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--consmax_learnable_gamma', default=True, action=argparse.BooleanOptionalAction)
-
-    ### Polymax Options
-    model_group.add_argument("--polymax_x_intercept", type=float, default=-100.0)
-    model_group.add_argument("--polymax_y_intercept", type=float, default=1.0)
-    model_group.add_argument("--polymax_power", type=float, default=2.0)
-    model_group.add_argument("--polymax_divisor", type=float, default=1000.0)
-
-    ### ReLUMax Options
-    model_group.add_argument("--relumax_divisor", type=float, default=256.0)
-
-    ### ReLU2Max Options
-    model_group.add_argument("--relu2max_divisor", type=float, default=256.0)
-
-    ### SimgoidMax Options
-    model_group.add_argument("--sigmoidmax_divisor", type=float, default=256.0)
-
-    ### SigSoftmax Options
-    model_group.add_argument('--sigsoftmax_use_euler_base', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--sigsoftmax_base", type=float, default=2.0)
-
-    ### Strongermax Options - Testing Incremental Adjustments to Regular Softmax
-    model_group.add_argument("--strongermax_strength", type=float, default=math.e)
-    model_group.add_argument('--strongermax_div_by_sum_of_terms', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--strongermax_divisor", type=float, default=1.0)
-    model_group.add_argument('--strongermax_use_xmax', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--strongermax_xmax_guess', type=float, default=None)
-    model_group.add_argument('--strongermax_overflow_recompute', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--strongermax_overflow_recompute_value', type=float, default=88.0)
-
-    ### Strongermax Clamping
-    model_group.add_argument('--strongermax_clamping', default=False, action=argparse.BooleanOptionalAction)
-    model_group.add_argument('--strongermax_clamp_value', type=float, default=88.0)
-
-    ### From https://www.evanmiller.org/attention-is-off-by-one.html
-    model_group.add_argument('--strongermax_obo', type=float, default=0.0)
-    model_group.add_argument('--strongermax_use_learned_obo', default=False, action=argparse.BooleanOptionalAction)
-
-    ### Temperature adjustment factor
-    model_group.add_argument('--strongermax_temperature_factor', type=float, default=1.0)
-    model_group.add_argument('--strongermax_use_learned_temperature_factor', default=False, action=argparse.BooleanOptionalAction)
-
-    ### ExpPolymax Options
-    model_group.add_argument('--exppolymax_use_euler_base', default=True, action=argparse.BooleanOptionalAction)
-    model_group.add_argument("--exppolymax_base", type=float, default=4.0)
-    model_group.add_argument("--exppolymax_y_intercept", type=float, default=1.0)
-    model_group.add_argument("--exppolymax_power", type=float, default=2.0)
-    model_group.add_argument("--exppolymax_divisor", type=float, default=1000.0)
-
-    ### Softermax Specific Options
-    model_group.add_argument('--softermax_use_xmax', default=True, action=argparse.BooleanOptionalAction)
-
-    ### SoftPlus Options
-    model_group.add_argument('--softplus_divisor', type=float,default=100.0)
-    ### SquarePlus Options
-    model_group.add_argument('--squareplus_divisor', type=float,default=100.0)
-
-    ### Sequence Length Division https://arxiv.org/abs/2309.
-    model_group.add_argument('--div_by_seq_len', default=False, action=argparse.BooleanOptionalAction)
-
-    # Gradient Checkpointing
-    model_group.add_argument('--use_gradient_checkpointing', default=False, action=argparse.BooleanOptionalAction, help="Memory efficient training, but takes longer time to train due to trading compute time for memory efficiency. For best memory tradeoff omit the --compile flag. For medium memory tradeoff add --compile.")
-    model_group.add_argument('--recompute_backward_pass', default=False, action=argparse.BooleanOptionalAction, help="Recomputes for the backward pass, must use with --use_gradient_checkpointing")
-
-    # Optimizer args
-    training_group.add_argument('--max_iters', default=3500, type=int)
-    training_group.add_argument('--weight_decay', default=1e-1, type=float)
-    training_group.add_argument('--beta1', default=0.9, type=float)
-    training_group.add_argument('--beta2', default=0.99, type=float)
-    training_group.add_argument('--grad_clip', default=1.0, type=float)
-
-    # LR schedule args
-    training_group.add_argument('--learning_rate', default=1e-3, type=float)
-    training_group.add_argument('--min_lr', default=1e-4, type=float)
-    training_group.add_argument('--decay_lr', default=False, action=argparse.BooleanOptionalAction)
-    training_group.add_argument('--lr_decay_iters', default=3500, type=int)
-    training_group.add_argument('--lr_decay_match_max_iters', default=True, action=argparse.BooleanOptionalAction)
-    training_group.add_argument('--warmup_iters', default=100, type=int)
-
-    # DDP args
-    training_group.add_argument('--backend', default='nccl', type=str)
-    training_group.add_argument('--gradient_accumulation_steps', default=1, type=int)
-
-    # System args
-    training_group.add_argument('--device', default='cuda', type=str)
-    training_group.add_argument("--dtype", type=str, default="float16", choices=["bfloat16", "float16", "float32"], help="torch data type for inference, e.g. 'int8'")
-    training_group.add_argument('--compile', default=False, action=argparse.BooleanOptionalAction)
-
-    # Logging args
-    logging_group.add_argument('--log_project', default='out-test', type=str)
-    logging_group.add_argument('--log_run_name', default='logs-test', type=str)
-    logging_group.add_argument('--timestamp', default='', type=str)
-
-    # Module And Parameter Logging and Plots of Summary Statistics
-    model_group.add_argument('--softmax_io_logging', default=False, action=argparse.BooleanOptionalAction, help="logs inputs and outputs of supported softmaxes")
-    model_group.add_argument('--softmax_io_log_interval', default=1, type=int)
-    model_group.add_argument('--consmax_beta_gamma_logging', default=False, action=argparse.BooleanOptionalAction, help="logs beta and gamma")
-    logging_group.add_argument('--create_statistics', default=False, action=argparse.BooleanOptionalAction)
-    logging_group.add_argument('--plot_statistics', default=False, action=argparse.BooleanOptionalAction)
-
-    # CSV logging
-    logging_group.add_argument('--csv_log', default=True, action=argparse.BooleanOptionalAction)
-    logging_group.add_argument('--csv_dir', default='csv_logs', type=str)
-    logging_group.add_argument('--csv_name', default='output', type=str, help="Output csv basename. Note, the .csv will be automatically appended.")
-
-    # Tensorboard args
-    logging_group.add_argument('--tensorboard_log', default=True, action=argparse.BooleanOptionalAction)
-    logging_group.add_argument('--tensorboard_log_dir', type=str, default='logs')
-    logging_group.add_argument('--tensorboard_run_name', type=str, default='logs-test')
-
-    # Wandb args
-    logging_group.add_argument('--wandb_log', default=False, action=argparse.BooleanOptionalAction)
-    logging_group.add_argument('--wandb_project', type=str, default='out-test')
-    logging_group.add_argument('--wandb_run_name', type=str, default='logs-test')
-
-    ### Create model from json config file & save config file to json
-    logging_group.add_argument('--load_config_json', type=str, help="Option to load model parameters from existing json file")
-    logging_group.add_argument('--save_config_json', type=str, help="Option to save model parameters as new config json file")
-
-    # Visualization args
-    logging_group.add_argument('--statistic', choices=[ 'input_mean', 'input_median', 'input_stdev', 'input_max', 'input_min', 'output_mean', 'output_median', 'output_stdev', 'output_max', 'output_min', 'all_stats', 'input_all','output_all' ], default='input_mean', help='Select one or all statistics to display, e.g., --statistic input_min, or --statistic all_stats')
-    logging_group.add_argument('--graph_type', choices=[ "heatmap", "plot", "boxplot", "all" ], default='no_graph', help='Select one of the graph types to display, e.g., --graph_type heatmap, or --graph_type plot')
-    logging_group.add_argument('--box_plot_interval', default=1000, type=int, help='Instead of using mean/median/stdev statistics, create box plot of all input/output values at certain intervals of iteration')
-    logging_group.add_argument('--box_plot_statistic', choices=['input', 'output', 'all'], default='', help='Select input or output statistic to display in boxplot')
-
-    # Model Parameter Distribution
-    logging_group.add_argument('--print_model_info', default=True, action=argparse.BooleanOptionalAction)
-
-    args = parser.parse_args()
-
-    if args.load_config_json is not None:
-        with open(args.load_config_json, 'r') as config_file:
-            config = json.load(config_file)
-
-        # Update the args namespace with values from the JSON file
-        for key, value in config.items():
-            setattr(args, key, value)
-
-    # Save all params to provided json if flag is present
-    if args.save_config_json is not None:
-        with open(args.save_config_json, 'w') as json_file:
-            json.dump(vars(args), json_file)
-
-    return args, model_group, training_group, logging_group
 
 class Trainer:
 
@@ -552,14 +59,40 @@ class Trainer:
         self.training_group = training_group
         self.logging_group = logging_group
 
-        # typically make the decay iters equal to max_iters
+        # GNS and batch schedule
+        self.gns = None
+        self.grad_norm = None
+        self.grad_std = None
+        self.tokens_trained = 0
+        # If using multiple datasets, track tokens trained per dataset.
+        if self.args.dataset_list is not None:
+            # Flatten each element (which may contain multiple dataset names) into a single list of tokens
+            flattened_list = []
+            for entry in self.args.dataset_list:
+                flattened_list.extend(entry.split())
+            self.args.dataset_list = flattened_list
+            # Track tokens and epochs trained per dataset
+            self.tokens_trained_dict = {dataset: 0 for dataset in self.args.dataset_list}
+            self.epochs_trained_dict = {dataset: 0 for dataset in self.args.dataset_list}
+
+            # Also, set self.args.dataset to the first dataset in the list
+            self.args.dataset = self.args.dataset_list[0]
+            print(self.args.dataset)
+
+        # init optimizer and scheduler
+        self.optimizer = None
+        self.scheduler = None
+
+        # Learning Rate Settings
+        self.lr = self.args.learning_rate
+        ## Make the decay iters equal to max_iters if not specified
         if self.args.lr_decay_match_max_iters:
             self.args.lr_decay_iters = self.args.max_iters
 
         self.setup()
 
         if self.args.sample_only:
-            self.sample_and_print(self.args.max_sample_tokens, start_tokens=self.args.sample_start_tokens)
+            self.sample_and_print()
 
         if self.args.create_statistics:
             self.stats = initialize_statistics(self.args.n_layer, self.args.n_head)
@@ -622,12 +155,39 @@ class Trainer:
             with open(self.args.out_dir + "/best_val_loss_and_iter.txt", 'w') as file:
                 print("resetting best val loss file")
 
+
             self.load_data()
+            # Initialize sampling state if using sequential or without_replacement
+            if self.args.sampling_method in ["sequential", "without_replacement"]:
+                if self.args.dataset_list is None:
+                    available = len(self.train_data) - self.args.block_size
+                    if self.args.sampling_method == "without_replacement":
+                        self.indices_perm = np.random.permutation(available)
+                    else:  # sequential: simply use a range
+                        self.indices_perm = np.arange(available)
+                    self.current_ptr = 0
+                else:
+                    # For each dataset in dataset_list, store a permutation and pointer.
+                    self.dataset_perm = {}
+                    self.dataset_ptr = {}
+                    for d in self.args.dataset_list:
+                        available = len(self.train_data_dict[d]) - self.args.block_size
+                        if self.args.sampling_method == "without_replacement":
+                            self.dataset_perm[d] = np.random.permutation(available)
+                        else:
+                            self.dataset_perm[d] = np.arange(available)
+                        self.dataset_ptr[d] = 0
+
             gptconf = GPTConfig(**self.model_args)
             self.model = GPT(gptconf)
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number
-        elif self.args.init_from == 'resume' or self.args.init_from == 'prev_run':
+
+            self.optimizer = self.create_optimizer()
+            self.scheduler = self.create_scheduler()
+
+        elif self.args.init_from in ['resume', "prev_run"] :
+
             if self.args.init_from == 'resume':
                 ckpt_path = os.path.join(self.args.out_dir, self.args.init_from_ckpt)
                 checkpoint = torch.load(ckpt_path, map_location=self.device)
@@ -660,6 +220,21 @@ class Trainer:
             if self.args.lsv_focused_training:
                 self.model.freeze_non_lsv_parameters()
 
+            # Ensure optimizer and scheduler are initialized before loading state
+            self.optimizer = self.create_optimizer()
+            self.scheduler = self.create_scheduler()
+
+            if "optimizer" in checkpoint and checkpoint["optimizer"] is not None:
+                self.optimizer.load_state_dict(checkpoint["optimizer"])
+            else:
+                print("Warning: No optimizer state found in checkpoint. Using newly initialized optimizer.")
+
+            if "scheduler" in checkpoint and checkpoint["scheduler"] is not None and self.scheduler is not None:
+                self.scheduler.load_state_dict(checkpoint["scheduler"])
+            else:
+                print("Warning: No scheduler state found in checkpoint or scheduler is None. Using newly initialized scheduler.")
+
+
         elif self.args.init_from.startswith('gpt2'):
 
             assert self.args.gpt2_type in model_variation_dictionary
@@ -679,9 +254,22 @@ class Trainer:
             if self.args.lsv_focused_training:
                 self.model.freeze_non_lsv_parameters()
 
+            self.optimizer = self.create_optimizer()
+            self.scheduler = self.create_scheduler()
+
         if self.args.block_size < self.model.config.block_size:
             self.model.crop_block_size(self.args.block_size)
             self.model_args['block_size'] = self.args.block_size
+
+        # Add gradient monitoring
+        if self.args.gns_type is not None:
+            get_gns_fn = {'sogns': add_sogns_hooks, 'exact': add_exact_hooks}
+            add_hooks_to_model(self.model, get_gns_fn[self.args.gns_type])
+            ema_beta = self.args.gns_ema_beta
+            self.gns_ema = gns_utils.EMA(beta=ema_beta)
+
+            # Initialize GNS for later
+            self.gns = None
 
         self.model.to(self.device)
 
@@ -694,8 +282,6 @@ class Trainer:
 
         # Optimizer
         self.scaler = torch.amp.GradScaler(self.device_type, enabled=(self.args.dtype == 'float16'))
-        self.optimizer = self.model.configure_optimizers(self.args.weight_decay, self.args.learning_rate,
-                                                         (self.args.beta1, self.args.beta2), self.device_type)
 
         if self.args.compile:
             print("compiling the model... (takes a ~minute)")
@@ -725,6 +311,43 @@ class Trainer:
             self.args.csv_name = wandb_run_name
             wandb.init(project=self.args.wandb_project, name=self.args.wandb_run_name, config=self.args)
         self.load_tokenizer()
+
+    def create_optimizer(self):
+        param_groups = [
+            {"params": self.model.parameters(), "lr": self.args.learning_rate}
+        ]
+
+        if self.args.optimizer == "adamw":
+            self.args.adamw_betas = tuple(self.args.adamw_betas)
+            optimizer = torch.optim.AdamW(param_groups, lr=self.args.learning_rate, betas=tuple(self.args.adamw_betas),
+                                          eps=self.args.adamw_eps, weight_decay=self.args.adamw_weight_decay)
+        elif self.args.optimizer == "sgd":
+            optimizer = torch.optim.SGD(param_groups, lr=self.args.learning_rate, momentum=self.args.sgd_momentum, weight_decay=self.args.weight_decay)
+        elif self.args.optimizer == "adagrad":
+            optimizer = torch.optim.Adagrad(param_groups, lr=self.args.learning_rate, lr_decay=self.args.adagrad_lr_decay, weight_decay=self.args.weight_decay)
+        elif self.args.optimizer == "rmsprop":
+            optimizer = torch.optim.RMSprop(param_groups, lr=self.args.learning_rate, alpha=self.args.rmsprop_alpha, weight_decay=self.args.weight_decay)
+        elif self.args.optimizer == "nadam":
+            self.args.nadam_betas = tuple(self.args.nadam_betas)
+            optimizer = torch.optim.NAdam(param_groups, lr=self.args.learning_rate, betas=tuple(self.args.nadam_betas), eps=self.args.nadam_eps, weight_decay=self.args.weight_decay)
+        else:
+            raise ValueError(f"Unknown optimizer: {self.args.optimizer}")
+
+        return optimizer
+
+    def create_scheduler(self):
+        if self.args.lr_scheduler == "none":
+            return None
+        elif self.args.lr_scheduler == "cosine":
+            return torch.optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=self.args.cosine_t_max, eta_min=self.args.cosine_eta_min)
+        elif self.args.lr_scheduler == "exponential":
+            return torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=self.args.exponential_gamma)
+        elif self.args.lr_scheduler == "step":
+            return torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=self.args.step_lr_size, gamma=self.args.step_lr_gamma)
+        elif self.args.lr_scheduler == "plateau":
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, mode=self.args.plateau_mode, factor=self.args.plateau_factor, patience=self.args.plateau_patience)
+        else:
+            raise ValueError(f"Unknown scheduler: {self.args.lr_scheduler}")
 
 
     def load_tokenizer(self):
@@ -796,9 +419,11 @@ class Trainer:
         return ''.join(chars)
 
     @torch.no_grad()
-    def sample_and_print(self, max_sample_tokens, start_tokens="\n"):
+    def sample_and_print(self):
         # Do one iteration per lsv, default to one with no lsv
         sample_iterations = 1
+
+        self.model.eval()
 
         if self.args.dataset_list is not None:
             sample_iterations = len(self.args.dataset_list)
@@ -808,21 +433,29 @@ class Trainer:
                 self.model.set_lsv_index(i)
                 print(f"lsv index {i}")
 
-            start_ids = torch.tensor(self.encode(start_tokens), dtype=torch.long, device=self.device)[None, ...]
-            x = start_ids
+            start_ids = torch.tensor(self.encode(self.args.sample_start_tokens), dtype=torch.long, device=self.device)[None, ...]
 
             with torch.no_grad():
-                for _ in range(max_sample_tokens):
-                    x_cond = x if x.size(1) <= self.args.block_size else x[:, -self.args.block_size:]
-                    logits, _ = self.model(x_cond, iter_num=self.iter_num)
-                    logits = logits[:, -1, :]
-                    probs = torch.softmax(logits, dim=-1)
-                    next_id = torch.multinomial(probs, num_samples=1)
-                    x = torch.cat((x, next_id), dim=1)
+                sample_with_existing_model(
+                    model=self.model,
+                    start_ids=start_ids,
+                    start_tokens=self.args.sample_start_tokens,
+                    decode=self.decode,
+                    device=self.device,
+                    out_dir=self.args.out_dir,
+                    max_new_tokens=self.args.max_sample_tokens,
+                    temperature=self.args.temperature,
+                    top_k=self.args.top_k,
+                    colorize_output=self.args.colorize_output,
+                    colorize_mode=self.args.colorize_mode,
+                    token_boundary=(self.args.token_boundary or None),
+                    show_heatmaps=self.args.show_heatmaps,
+                    sample_file=self.args.sample_file,
+                    iter_num=self.iter_num,
+                    num_samples=self.args.num_samples
+                )
 
-            sampled_text = self.decode(x[0].tolist())
-            print(f"Start tokens:\n{start_tokens}\n")
-            print(f"Sampled text:\n{sampled_text}\n")
+        self.model.train()
 
     def get_vocab_size_from_meta(self):
         # Data loader
@@ -865,6 +498,8 @@ class Trainer:
                 # all other tokenations so far require only np.uint16
                 self.train_data = np.memmap(os.path.join('data', self.args.dataset, 'train.bin'), dtype=np.uint16, mode='r')
                 self.val_data = np.memmap(os.path.join('data', self.args.dataset, 'val.bin'), dtype=np.uint16, mode='r')
+            # Store total token count for the single dataset.
+            self.dataset_size_tokens = len(self.train_data)
         else:
             self.train_data_dict = {}
             self.val_data_dict = {}
@@ -897,6 +532,8 @@ class Trainer:
                 # Store in dictionaries
                 self.train_data_dict[dataset] = train_data
                 self.val_data_dict[dataset] = val_data
+            # For multi-dataset case, store the token count for each dataset in a dictionary.
+            self.dataset_size_tokens = {d: len(self.train_data_dict[d]) for d in self.args.dataset_list}
 
 
     def get_batch(self, split, target_dataset=None):
@@ -924,6 +561,7 @@ class Trainer:
             # If multi-dataset sampling is enabled, pick a dataset using sampling probabilities
             if target_dataset:
                 dataset = target_dataset
+                data = self.train_data_dict[dataset] if split == 'train' else self.val_data_dict[dataset]
             elif self.args.dataset_interleaving:
                 # print("using interleaving")
                 if self.args.dataset_sampling_probs is not None:
@@ -967,7 +605,6 @@ class Trainer:
                     dataset = self.args.dataset_list[dataset_index]
 
                 data = self.train_data_dict[dataset] if split == 'train' else self.val_data_dict[dataset]
-                # print(dataset)
             else:
                 # print("using probabilities")
                 if self.args.dataset_sampling_probs:
@@ -977,11 +614,11 @@ class Trainer:
                     # Default to uniform sampling if probabilities are not provided
                     dataset = np.random.choice(self.args.dataset_list)
                 # print(dataset)
+                data = self.train_data_dict[dataset] if split == 'train' else self.val_data_dict[dataset]
 
             if self.args.use_lsv:
                 self.model.set_lsv_index(self.args.dataset_list.index(dataset))
 
-            data = self.train_data_dict[dataset] if split == 'train' else self.val_data_dict[dataset]
 
             # set learning rate
             if self.args.dataset_sampling_learning_rate:
@@ -993,8 +630,53 @@ class Trainer:
             dataset = self.args.dataset
             data = self.train_data if split == 'train' else self.val_data
 
+        # Adaptive GNS settings
+        if (self.gns is not None) and (self.args.gns_target is not None):
+            if self.gns < self.args.gns_target:
+                if self.args.batch_size < self.args.gns_max_batch:
+                    self.args.batch_size = math.ceil(self.args.batch_size * (1.0 + self.args.gns_batch_pct))
+            if self.gns > self.args.gns_target:
+                self.args.batch_size = math.ceil(self.args.batch_size * (1.0 - self.args.gns_batch_pct))
+
         # Generate random indices for the batch
         ix = torch.randint(len(data) - self.args.block_size, (self.args.batch_size,))
+        available = len(data) - self.args.block_size
+        if self.args.sampling_method == "random":
+            ix = torch.randint(available, (self.args.batch_size,))
+        elif self.args.sampling_method == "sequential":
+            # Use the sequential indices from self.indices_perm (or per dataset)
+            if self.args.dataset_list is None:
+                if self.current_ptr + self.args.batch_size > available:
+                    self.current_ptr = 0
+                selected_indices = self.indices_perm[self.current_ptr: self.current_ptr + self.args.batch_size]
+                self.current_ptr += self.args.batch_size
+            else:
+                d = target_dataset if target_dataset is not None else self.args.dataset
+                if self.dataset_ptr[d] + self.args.batch_size > available:
+                    self.dataset_ptr[d] = 0
+                selected_indices = self.dataset_perm[d][self.dataset_ptr[d]: self.dataset_ptr[d] + self.args.batch_size]
+                self.dataset_ptr[d] += self.args.batch_size
+            ix = torch.tensor(selected_indices)
+        elif self.args.sampling_method == "without_replacement":
+            # Similar to sequential but with a shuffled permutation that is reshuffled when exhausted.
+            if self.args.dataset_list is None:
+                if self.current_ptr + self.args.batch_size > available:
+                    self.indices_perm = np.random.permutation(available)
+                    self.current_ptr = 0
+                selected_indices = self.indices_perm[self.current_ptr: self.current_ptr + self.args.batch_size]
+                self.current_ptr += self.args.batch_size
+            else:
+                d = target_dataset if target_dataset is not None else self.args.dataset
+                if self.dataset_ptr[d] + self.args.batch_size > available:
+                    self.dataset_perm[d] = np.random.permutation(available)
+                    self.dataset_ptr[d] = 0
+                selected_indices = self.dataset_perm[d][self.dataset_ptr[d]: self.dataset_ptr[d] + self.args.batch_size]
+                self.dataset_ptr[d] += self.args.batch_size
+            ix = torch.tensor(selected_indices)
+        else:
+            # Default to random sampling if unknown method
+            ix = torch.randint(available, (self.args.batch_size,))
+
 
         # Get training and targets
         x = torch.stack([torch.from_numpy((data[i:i+self.args.block_size]).astype(np.int64)) for i in ix])
@@ -1005,7 +687,7 @@ class Trainer:
             x, y = x.pin_memory().to(self.device, non_blocking=True), y.pin_memory().to(self.device, non_blocking=True)
         else:
             x, y = x.to(self.device), y.to(self.device)
-        return x, y
+        return x, y, dataset
 
     @torch.no_grad()
     def custom_loss_with_top1_focus(self, logits, targets):
@@ -1029,40 +711,45 @@ class Trainer:
 
         self.model.eval()
         # If multi-dataset sampling is enabled, we calculate loss per dataset
-        if self.args.dataset_list and len(self.args.dataset_list) > 1:
+        if self.args.dataset_list:
             for dataset in self.args.dataset_list:
                 print(f"Calculating loss for dataset: {dataset}")
                 dataset_losses = {'train': torch.zeros(self.args.eval_iters), 'val': torch.zeros(self.args.eval_iters)}
                 for split in ['train', 'val']:
                     for k in range(self.args.eval_iters):
-                        X, Y = self.get_batch(split, target_dataset=dataset)
+                        X, Y, test_dataset = self.get_batch(split, target_dataset=dataset)
                         with self.ctx:
                             logits, loss = self.model(X, Y, iter_num=self.iter_num)
                         dataset_losses[split][k] = loss.item()
                 out['datasets'][dataset] = {
                     'train': dataset_losses['train'].mean(),
-                    'val': dataset_losses['val'].mean()
+                    'train_std': dataset_losses['train'].std(),
+                    'val': dataset_losses['val'].mean(),
+                    'val_std': dataset_losses['val'].std(),
                 }
-            print("test")
             out['val'] = out['datasets'][self.args.dataset]['val']
+            out['val_std'] = out['datasets'][self.args.dataset]['val_std']
             out['train'] = out['datasets'][self.args.dataset]['train']
-            print(out['val'])
-
+            out['train_std'] = out['datasets'][self.args.dataset]['train_std']
         else:
             # Default behavior for a single dataset
             for split in ['train', 'val']:
                 losses = torch.zeros(self.args.eval_iters)
                 for k in range(self.args.eval_iters):
-                    X, Y = self.get_batch(split)
+                    X, Y, _ = self.get_batch(split)
                     with self.ctx:
                         logits, loss = self.model(X, Y, iter_num=self.iter_num)
                     losses[k] = loss.item()
                 out[split] = losses.mean()
+                out[split + "_std"] = losses.std()
 
         self.model.train()
         return out
 
+
     def get_lr(self, it):
+        if self.scheduler:
+            return self.scheduler.get_last_lr()[0]
         if it < self.args.warmup_iters:
             return self.args.learning_rate * it / self.args.warmup_iters
         if it > self.args.lr_decay_iters:
@@ -1072,55 +759,145 @@ class Trainer:
         coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
         return self.args.min_lr + coeff * (self.args.learning_rate - self.args.min_lr)
 
-    def log_metrics(self, losses, lr, running_mfu, vram_allocated, iter_num, target_dataset=None):
+
+    @torch.no_grad()
+    def get_gradient_stats(self):
+        """
+        Calculates and returns the gradient standard deviation, norm, and mean for a PyTorch model.
+
+        Args:
+            model: The PyTorch model.
+
+        Returns:
+            A dictionary containing the gradient standard deviation, norm, and mean.  Returns None if no gradients are available.
+        """
+
+        gradients = []
+        for param in self.model.parameters():
+            if param.grad is not None:  # Check if gradients exist for the parameter
+                gradients.append(param.grad.view(-1)) # Flatten and append the gradients
+            # Handle cases where some parameters might not have gradients (e.g. frozen layers)
+        if not gradients:
+            return None # No gradients found
+
+        all_gradients = torch.cat(gradients) # Concatenate all gradients into a single tensor
+
+        self.grad_std = torch.std(all_gradients).item()
+        self.grad_norm = torch.norm(all_gradients).item()
+        self.grad_mean = torch.mean(all_gradients).item()
+
+
+    def export_model_graph(self):
+        # Dummy input for tracing
+        dummy_input = torch.randint(0, self.model_args['vocab_size'], (self.args.batch_size, self.args.block_size)).to(self.device)
+        dummy_targets = torch.randint(0, self.model_args['vocab_size'], (self.args.batch_size, self.args.block_size)).to(self.device)  # Dummy targets
+        dummy_iter_num = torch.tensor([0], dtype=torch.long).to(self.device) # Dummy iter_num (must be a tensor!)
+
+        # Log the model graph
+        if self.args.tensorboard_log and self.args.tensorboard_graph:
+            self.writer.add_graph(self.model, (dummy_input, dummy_targets, dummy_iter_num))
+
+        # Export to ONNX and save for Netron
+        if self.args.onnx_output:
+            onnx_path = os.path.join(self.args.out_dir, "model.onnx")
+            torch.onnx.export(self.model,
+                              (dummy_input, dummy_targets, dummy_iter_num), # All dummy inputs
+                              onnx_path,
+                              export_params=True,
+                              opset_version=14,
+                              input_names=['input'],
+                              output_names=['output'],
+                              dynamic_axes={'input': {0: 'batch_size', 1: 'sequence_length'},
+                                            'output': {0: 'batch_size', 1: 'sequence_length'}})
+
+    def log_metrics(self, losses, running_mfu, epoch, tokens_trained, target_dataset):
+
+        if self.iter_num == 0 and self.args.tensorboard_log and self.args.export_model_graph == True  and self.args.compile == False:
+            self.export_model_graph()
 
         if self.args.tensorboard_log:
             # Log metrics for each dataset separately
-            if target_dataset:
-                self.writer.add_scalars(
-                    "loss", {f"{target_dataset}/train": losses['train'].item(),
-                             f"{target_dataset}/val": losses['val'].item()}, iter_num
-                )
-            else:
-                self.writer.add_scalars(
-                    "loss", {"train": losses['train'].item(), "val":
-                             losses['val'].item()}, iter_num
-                )
+            self.writer.add_scalars(
+                    f"{target_dataset}/loss_iters", {
+                        f"train": losses['train'].item(),
+                        f"train_std": losses['train_std'].item(),
+                        f"val": losses['val'].item(),
+                        f"val_std": losses['val_std'].item(),
+                        },
+                    self.iter_num
+                    )
+            self.writer.add_scalars(
+                    f"{target_dataset}/loss_tokens", {
+                        f"train": losses['train'].item(),
+                        f"train_std": losses['train_std'].item(),
+                        f"val": losses['val'].item(),
+                        f"val_std": losses['val_std'].item(),
+                        },
+                    tokens_trained
+                    )
 
-            self.writer.add_scalar("mfu_pct", running_mfu * 100, iter_num)
-            self.writer.add_scalar("lr", lr, iter_num)
-            self.writer.add_scalar("vram", vram_allocated, iter_num)
+            self.writer.add_scalar(f"{target_dataset}/epoch", epoch, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/tokens_trained", tokens_trained, self.iter_num)
 
-        if self.args.wandb_log and self.master_process:
-            import wandb
-            log_data = {
-                "iter": iter_num,
-                "lr": lr,
-                "mfu": running_mfu * 100,
-                "vram": vram_allocated,
-            }
-            if target_dataset:
-                log_data[f"{dataset}/train/loss"] = losses['train']
-                log_data[f"{dataset}/val/loss"] = losses['val']
-            else:
-                log_data["train/loss"] = losses['train']
-                log_data["val/loss"] = losses['val']
+            self.writer.add_scalar(f"{target_dataset}/vram", self.vram_allocated, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/mfu_pct", running_mfu * 100, self.iter_num)
 
-            wandb.log(log_data)
+            self.writer.add_scalar(f"{target_dataset}/lr_iters", self.lr, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/lr_tokens", self.lr, tokens_trained)
+
+            self.writer.add_scalar(f"{target_dataset}/batch_size_iters", self.args.batch_size, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/batch_size_tokens", self.args.batch_size, tokens_trained)
+
+
+            if self.args.gns_type is not None:
+                self.writer.add_scalar(f"{target_dataset}/gns_iters", self.gns, self.iter_num)
+                self.writer.add_scalar(f"{target_dataset}/gns_tokens", self.gns, tokens_trained)
+
 
         if self.args.csv_log:
-            if target_dataset:
-                self.write_to_csv(losses['train'].item(), losses['val'].item(), prefix=f"{target_dataset}_")
-            else:
-                self.write_to_csv(losses['train'].item(), losses['val'].item())
+            # concise training metrics
+            self.write_to_csv(target_dataset, losses['train'].item(), losses['val'].item(), prefix=f"{target_dataset}_")
 
-            # Other metrics
-            self.write_to_csv(iter_num, lr, running_mfu, vram_allocated, prefix="misc_")
+            # bulk metrics
+            self.write_to_csv(target_dataset, losses['train'].item(), losses['val'].item(), running_mfu, prefix="bulk_")
 
+    def log_metrics_non_validation(self, loss_training, running_mfu, epoch, tokens_trained, target_dataset):
+        if self.args.tensorboard_log:
+            self.writer.add_scalars(
+                    f"{target_dataset}/loss_iters",
+                    {f"train": loss_training},
+                    self.iter_num
+                    )
+            self.writer.add_scalars(
+                    f"{target_dataset}/loss_tokens",
+                    {f"train": loss_training},
+                    tokens_trained
+                    )
 
+            self.writer.add_scalar(f"{target_dataset}/mfu_pct", running_mfu * 100, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/vram", self.vram_allocated, self.iter_num)
 
+            self.writer.add_scalar(f"{target_dataset}/epoch", epoch, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/tokens_trained", tokens_trained, self.iter_num)
+
+            self.writer.add_scalar(f"{target_dataset}/lr_iters", self.lr, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/lr_tokens", self.lr, tokens_trained)
+
+            self.writer.add_scalar(f"{target_dataset}/batch_size_iter", self.args.batch_size, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/batch_size_tokens", self.args.batch_size, tokens_trained)
+
+            self.writer.add_scalar(f"{target_dataset}/grad_norm_iters", self.grad_norm, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/grad_norm_tokens", self.grad_norm, tokens_trained)
+
+            self.writer.add_scalar(f"{target_dataset}/grad_std_iters", self.grad_std, self.iter_num)
+            self.writer.add_scalar(f"{target_dataset}/grad_std_tokens", self.grad_std, tokens_trained)
+
+            if self.args.gns_type is not None:
+                self.writer.add_scalar(f"{target_dataset}/gns_iters", self.gns, self.iter_num)
+                self.writer.add_scalar(f"{target_dataset}/gns_tokens", self.gns, tokens_trained)
 
     def write_to_csv(self, *args, prefix=""):
+        args = list(args)
         csv_full_dir = self.args.csv_dir
         if self.args.csv_ckpt_dir:
             csv_full_dir = f"{self.args.csv_dir}/{self.args.csv_ckpt_dir}"
@@ -1132,74 +909,56 @@ class Trainer:
         with open(csv_path, 'a', newline='') as file:
             writer = csv.writer(file)
             # Write arguments as a new row in the CSV
+            args.insert(0, self.iter_num)
+            args.append(self.lr)
+            args.append(self.args.batch_size)
+            args.append(self.tokens_trained)
+            if self.args.gns_type is not None:
+                args.append(self.gns)
             writer.writerow(args)
 
 
-    def log_gamma_beta(self, gamma, beta, iter_num, layer_num, head_num=None):
+    def log_gamma_beta(self, gamma, beta, layer_num, head_num=None):
         if self.args.tensorboard_log:
             if head_num:
                 self.writer.add_scalars(
                         "gammas",
-                        {"gamma_L" + str(layer_num) + "_H" + head_num: gamma},
-                        iter_num
-                        )
+                        {"gamma_L" + str(layer_num) + "_H" + head_num: gamma}, self.iter_num)
                 self.writer.add_scalars(
                         "betas",
-                        {"beta_L" + str(layer_num) + "_H" + head_num: beta},
-                        iter_num
-                        )
+                        {"beta_L" + str(layer_num) + "_H" + head_num: beta}, self.iter_num)
             else:
-                self.writer.add_scalar( "gamma_L" + str(layer_num), gamma, iter_num)
-                self.writer.add_scalar( "beta_L" + str(layer_num), beta, iter_num)
+                self.writer.add_scalar( "gamma_L" + str(layer_num), gamma, self.iter_num)
+                self.writer.add_scalar( "beta_L" + str(layer_num), beta, self.iter_num)
 
         if self.args.wandb_log and self.master_process:
             import wandb
             wandb.log({
-                "iter": iter_num,
+                "iter": self.iter_num,
                 "train/loss": losses['train'],
                 "val/loss": losses['val'],
-                "lr": lr,
+                "lr": self.lr,
                 "mfu": running_mfu*100,
-            })
-
-    def log_metrics_non_validation(self, loss_training, running_mfu, vram_allocated, iter_num, target_dataset=None):
-        if self.args.tensorboard_log:
-            if target_dataset:
-                self.writer.add_scalars(
-                    "loss", {f"{target_dataset}/train": loss_training}, iter_num
-                )
-            else:
-                self.writer.add_scalars(
-                    "loss", { "train": loss_training }, iter_num
-                )
-            self.writer.add_scalar("mfu_pct", running_mfu * 100, iter_num)
-            self.writer.add_scalar("vram", vram_allocated, iter_num)
-
-        if self.args.wandb_log and self.master_process:
-            import wandb
-            wandb.log({
-                "iter": iter_num,
-                "train/loss": loss_training,
-                "mfu": running_mfu*100,
-                "vram": vram_allocated,
-            })
+                })
 
     def save_checkpoint(self, filename):
         checkpoint = {
-            'model': self.raw_model.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'model_args': self.model_args,
-            'iter_num': self.iter_num,
-            'best_val_loss': self.best_val_loss,
-            'config': vars(self.args),
-        }
+                'model': self.raw_model.state_dict(),
+                'optimizer': self.optimizer.state_dict() if self.optimizer else None,
+                'scheduler': self.scheduler.state_dict() if self.scheduler else None,
+                'model_args': self.model_args,
+                'iter_num': self.iter_num,
+                'best_val_loss': self.best_val_loss,
+                'config': vars(self.args),
+                }
         torch.save(checkpoint, os.path.join(self.args.out_dir, filename))
 
     def train(self):
-        self.X, self.Y = self.get_batch('train')
+        self.X, self.Y, current_dataset = self.get_batch('train')
         t0 = time.time()
         local_iter_num = 0
         running_mfu = -1.0
+        current_epoch = 0.0
         num_steps_with_worse_loss = 0
         # TODO: Move statistics labels to statistics scripts
         graph_y_labels = []
@@ -1212,22 +971,35 @@ class Trainer:
         with progress:
             task_id = progress.add_task("[green]Training...", total=(self.args.max_iters - self.iter_num))
             while True:
-                lr = self.get_lr(self.iter_num) if self.args.decay_lr else self.args.learning_rate
+                if self.scheduler is not None:
+                    self.lr = self.get_lr(self.iter_num)
                 for param_group in self.optimizer.param_groups:
-                    param_group['lr'] = lr
+                    param_group['lr'] = self.lr
 
                 if self.iter_num % self.args.eval_interval == 0 and self.master_process:
+
+                    # Save current RNG states
+                    torch_rng_state = torch.get_rng_state()
+                    np_rng_state = np.random.get_state()
                     losses = self.estimate_loss()
-                    vram_allocated = get_gpu_memory_info(info_type='used') if self.args.device != "cpu" else 0
+                    # Restore RNG states so training sampling isn’t affected
+                    torch.set_rng_state(torch_rng_state)
+                    np.random.set_state(np_rng_state)
+
+                    if self.args.gns_type is not None:
+                        self.gns = self.gns_ema.get_gns()
+
+
+                    self.vram_allocated = get_gpu_memory_info(info_type='used') if self.args.device != "cpu" else 0
                     if self.args.dataset_list is not None:
                         # Print loss for each dataset if multiple datasets are used
                         for dataset, dataset_losses in losses['datasets'].items():
-                            print(f"step {self.iter_num}: {dataset} train loss {dataset_losses['train']:.4f}, val loss {dataset_losses['val']:.4f}")
-                            self.log_metrics(dataset_losses, lr, running_mfu, vram_allocated, self.iter_num, target_dataset=dataset)
+                            print(f"step {self.iter_num}: {dataset:<20s}, train loss {dataset_losses['train']:.4f}, train_stdev {dataset_losses['train_std']:.4f}, val loss {dataset_losses['val']:.4f}, val_stdev {dataset_losses['val_std']:.4f}, gns {self.gns:.2f}, batch_size {self.args.batch_size}, lr {self.lr:.4f}, tokens_trained {self.tokens_trained_dict[dataset]:.2e}")
+                            self.log_metrics(dataset_losses, running_mfu, self.epochs_trained_dict[dataset], self.tokens_trained_dict[dataset], dataset)
                     else:
                         # Default behavior for a single dataset
-                        print(f"step {self.iter_num}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
-                        self.log_metrics(losses, lr, running_mfu, vram_allocated, self.iter_num)
+                        print(f"step {self.iter_num}: train loss {losses['train']:.4f}, train_stdev {losses['train_std']:.4f}, val loss {losses['val']:.4f}, val_stdev {losses['val_std']:.4f}, lr {self.lr:.4f}")
+                        self.log_metrics(losses, running_mfu, current_epoch, self.tokens_trained, current_dataset)
 
                     if math.isnan(losses["val"]):
                         # If val loss is nan, then exit.
@@ -1257,7 +1029,7 @@ class Trainer:
                             self.save_checkpoint('ckpt.pt')
                         # Sample
                         if self.args.max_sample_tokens:
-                            self.sample_and_print(self.args.max_sample_tokens, start_tokens=self.args.sample_start_tokens)
+                            self.sample_and_print()
                         # export embedding table to npy file
                         if self.args.export_wte_npy:
                             self.raw_model.export_wte(self.args.export_wte_npy)
@@ -1287,6 +1059,7 @@ class Trainer:
                 if self.args.eval_only:
                     break
 
+
                 for micro_step in range(self.args.gradient_accumulation_steps):
                     if self.ddp:
                         self.model.require_backward_grad_sync = (micro_step == self.args.gradient_accumulation_steps - 1)
@@ -1299,9 +1072,34 @@ class Trainer:
 
                         loss = loss / self.args.gradient_accumulation_steps
 
-                    self.X, self.Y = self.get_batch('train')
+                    prior_dataset = current_dataset
+                    tokens_trained_this_batch = self.args.batch_size * self.args.block_size
+                    if self.args.dataset_list:
+                        # Update per–dataset count
+                        self.tokens_trained_dict[current_dataset] += tokens_trained_this_batch
+                        self.tokens_trained = self.tokens_trained_dict[current_dataset]
+                    else:
+                        self.tokens_trained += tokens_trained_this_batch
+
+                    # Compute epoch for logging:
+                    if self.args.dataset_list:
+                        current_epoch = self.tokens_trained_dict[current_dataset] / self.dataset_size_tokens[current_dataset]
+                        self.epochs_trained_dict[current_dataset] = current_epoch
+                    else:
+                        current_epoch = self.tokens_trained / self.dataset_size_tokens
 
                     self.scaler.scale(loss).backward()
+
+                    # measure grad norms
+                    self.get_gradient_stats()
+
+                    self.X, self.Y, current_dataset = self.get_batch('train')
+
+                    if self.args.gns_type is not None:
+                        approx_gns_results = gather_hook_results(self.model)
+                        self.gns_ema.update(*gns_utils.gnsify(approx_gns_results, self.args.batch_size, ddp=self.ddp))
+
+
 
                 if self.args.grad_clip != 0.0:
                     self.scaler.unscale_(self.optimizer)
@@ -1309,36 +1107,54 @@ class Trainer:
 
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
+                if self.scheduler:
+                    if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        self.scheduler.step(losses["val"])
+                    else:
+                        self.scheduler.step()
 
                 self.optimizer.zero_grad(set_to_none=True)
 
                 t1 = time.time()
                 dt = t1 - t0
                 t0 = t1
+
+
+                self.iter_num += 1
+                local_iter_num += 1
+
                 if self.iter_num % self.args.log_interval == 0 and self.master_process:
                     lossf = loss.item() * self.args.gradient_accumulation_steps
                     if local_iter_num >= 5:
                         mfu = self.raw_model.estimate_mfu(self.args.batch_size * self.args.gradient_accumulation_steps, dt)
                         running_mfu = mfu if running_mfu == -1.0 else 0.9*running_mfu + 0.1*mfu
-                    print(f"iter {self.iter_num}: loss {lossf:.4f}, time {dt*1000:.2f} ms, mfu {running_mfu*100:.2f}%")
+                    if self.args.gns_type is not None:
+                        self.gns = self.gns_ema.get_gns()
+                        if self.args.dataset_list:
+                            print(f"iter {self.iter_num}: loss {lossf:.4f}, time {dt*1000:.2f} ms, epoch {self.epochs_trained_dict[prior_dataset]:6.2f}, dataset: {prior_dataset}, mfu {running_mfu*100:.2f}%, gns {self.gns:.2f}, batch_size {self.args.batch_size}, lr {self.lr:.4f}, grad_norm {self.grad_norm:2f}, grad_std {self.grad_std:.2f}, tokens_trained {self.tokens_trained_dict[prior_dataset]:e}")
+                        else:
+                            print(f"iter {self.iter_num}: loss {lossf:.4f}, time {dt*1000:.2f} ms, epoch {current_epoch:6.2f}, dataset: {prior_dataset}, mfu {running_mfu*100:.2f}%, gns {self.gns:.2f}, batch_size {self.args.batch_size}, lr {self.lr:.4f}, grad_norm {self.grad_norm:.2f}, grad_std {self.grad_std:.2f}, tokens_trained {self.tokens_trained:e}")
+                    else:
+                        print(f"iter {self.iter_num}: loss {lossf:.4f}, time {dt*1000:.2f} ms, lr {self.lr}, epoch {current_epoch:6.2f}, tokens_trained {self.tokens_trained:e}, dataset: {prior_dataset}, {self.grad_norm}, grad_std {self.grad_std}, mfu {running_mfu*100:.2f}%")
+
                     if math.isnan(lossf):
                         # If training loss is nan, then exit.
                         with open(self.args.out_dir + "/nan_iter_num.txt", 'w') as file:
                             file.write(str(self.iter_num))
                             sys.exit("Exiting training loss is NaN")
 
-                    vram_allocated = get_gpu_memory_info(info_type='used') if self.args.device != "cpu" else 0
-                    self.log_metrics_non_validation(lossf, running_mfu, vram_allocated, self.iter_num)
+                    self.vram_allocated = get_gpu_memory_info(info_type='used') if self.args.device != "cpu" else 0
+                    if self.args.dataset_list:
+                        self.log_metrics_non_validation(lossf, running_mfu, self.epochs_trained_dict[prior_dataset], self.tokens_trained_dict[prior_dataset], prior_dataset)
+                    else:
+                        self.log_metrics_non_validation(lossf, running_mfu, current_epoch, self.tokens_trained, prior_dataset)
 
                 if self.args.create_statistics and local_iter_num % self.args.softmax_io_log_interval == 0:
                     create_statistics(self, graph_y_labels)
 
-                self.iter_num += 1
-                local_iter_num += 1
 
                 # Update progress bar
                 progress.update(task_id, advance=1)
-
                 # End of training actions
                 if self.iter_num > self.args.max_iters:
                     if self.args.only_save_checkpoint_at_end:
@@ -1348,7 +1164,7 @@ class Trainer:
 
                         # Sample if set
                         if self.args.max_sample_tokens:
-                            self.sample_and_print(self.args.max_sample_tokens, start_tokens=self.args.sample_start_tokens)
+                            self.sample_and_print()
                     break
 
             if self.args.plot_statistics:
