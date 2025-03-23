@@ -130,6 +130,6 @@ def apply_custom_attention(model, attention_variant, zeta=1.0, gamma=0.0):
             zeta=zeta,
             gamma=gamma
         )
-        custom_attn.load_state_dict(original_attn.state_dict())
+        custom_attn.load_state_dict(original_attn.state_dict(), strict=False)
         decoder_layer.self_attn = custom_attn
     return model
