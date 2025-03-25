@@ -1,40 +1,44 @@
-import argparse
+import argparse, torch
 from transformers import AutoTokenizer, OlmoForCausalLM, TrainingArguments, Trainer, DataCollatorForLanguageModeling
 from datasets import load_dataset
 from OLMo_model import apply_custom_attention
+from OLMo_train_args import parse_args
+from torch.quantization import get_default_qat_qconfig, prepare_qat, convert
 
 def main():
-    parser = argparse.ArgumentParser(description="Fine-tune Olmo with custom attention.")
-    parser.add_argument(
-        "--model_variant",
-        type=str,
-        choices=["clipped", "relu", "relu_norm", "gated", "softplus", "softplus_norm", "sigmoid", "sigmoid_norm", "obo", "learned_obo"],
-        default="relu",
-        help="Select which attention variant to use."
-    )
-    parser.add_argument("--lr", type=float, default=2e-5, help="Select learning rate.")
-    parser.add_argument("--weight_decay", type=float, default=0.01, help="Select weight decay.")
-    parser.add_argument("--max_steps", type=int, default=20000, help="Total number of training steps.")
-    parser.add_argument("--eval_steps", type=int, default=500, help="Number of steps before an evaluation is done on the eval dataset")
-    parser.add_argument("--save_steps", type=int, default=10000, help="Number of steps before a checkpoint is created")
-    args = parser.parse_args()
+    args = parse_args()
 
     # Load the pretrained model and tokenizer.
     tokenizer = AutoTokenizer.from_pretrained("allenai/OLMo-1B-0724-hf")
     model = OlmoForCausalLM.from_pretrained("allenai/OLMo-1B-0724-hf")
 
     # Apply the custom attention modifications based on the chosen variant.
-    if args.model_variant == "clipped":
+    if args.clip:
         # You can set specific parameters for clipped variant.
-        model = apply_custom_attention(model, attention_variant="clipped", zeta=1.0, gamma=-0.03)
+        model = apply_custom_attention(model, clip=True, gate=args.gate, obo_variant=args.obo_variant, attention_variant=args.model_variant, zeta=1.0, gamma=-0.03)
     else:
-        model = apply_custom_attention(model, attention_variant=args.model_variant)
+        model = apply_custom_attention(model, clip=False, gate=args.gate, obo_variant=args.obo_variant, attention_variant=args.model_variant)
 
     # (Optional) Example usage: tokenize a sample input and run a forward pass.
     sample_text = "Hello, how are you today?"
     inputs = tokenizer(sample_text, return_tensors="pt")
     outputs = model(**inputs)
     print("Logits shape:", outputs.logits.shape)
+
+    if args.quantize:
+        # Put the model in training mode.
+        model.train()
+        # Set the default QAT configuration. "fbgemm" is a common backend for CPU QAT.
+        model.qconfig = get_default_qat_qconfig("fbgemm")
+        # Disable quantization on embedding layers.
+        for name, module in model.named_modules():
+            if isinstance(module, torch.nn.Embedding):
+                module.qconfig = None
+        model = model.float()
+        # Prepare the model for QAT (this inserts fake quantization modules).
+        prepare_qat(model, inplace=True)
+        # (Optional) Move the model to CPU for QAT training.
+        model.to("cpu")
 
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
 
@@ -78,23 +82,32 @@ def main():
     # Create a data collator with dynamic padding (reduces wasted memory on padded tokens)
     data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    # Define training arguments with a reduced batch size and gradient accumulation
+    model_variant = (
+        ("clipped_" if args.clip else "") +
+        ("gated_" if args.gate else "") +
+        (args.obo_variant + "_" if args.obo_variant != "none" else "") +
+        args.model_variant
+    )
+    output_dir = "olmo-" + model_variant
+    if args.quantize:
+        output_dir = "quant_" + output_dir
+    fp16_flag = False if args.quantize else True
     training_args = TrainingArguments(
-        output_dir="./olmo-" + args.model_variant,
+        output_dir=output_dir,
         eval_strategy="steps",
-        eval_steps=args.eval_steps,
-        learning_rate=args.lr,
+        eval_steps=500,
+        learning_rate=2e-5,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
         # num_train_epochs=3,
-        weight_decay=args.weight_decay,
+        weight_decay=0.01,
         save_total_limit=3,
-        max_steps=args.max_steps,
-        save_steps=args.save_steps,
+        max_steps=10000,
+        save_steps=10000,
         logging_dir="./logs",
         logging_steps=100,
-        fp16=True,
+        fp16=fp16_flag,
     )
 
     # Initialize the Trainer with the data collator for dynamic padding
@@ -109,9 +122,17 @@ def main():
     # Fine-tune the model
     trainer.train()
 
+    if args.quantize:
+        # After training, convert the model to a quantized version.
+        model = convert(model.eval(), inplace=False)
+
     # Save the fine-tuned model and tokenizer
-    model.save_pretrained("./fine-tuned-olmo-" + args.model_variant)
-    tokenizer.save_pretrained("./fine-tuned-olmo-" + args.model_variant)
+    if args.quantize:
+        save_dir = "./fine-tuned-quant-olmo-" + model_variant
+    else:
+        save_dir = "./fine-tuned-olmo-" + model_variant
+    model.save_pretrained(save_dir)
+    tokenizer.save_pretrained(save_dir)
 
 if __name__ == "__main__":
     main()
