@@ -3,7 +3,6 @@ from transformers import AutoTokenizer, OlmoForCausalLM, TrainingArguments, Trai
 from datasets import load_dataset
 from OLMo_model import apply_custom_attention
 from OLMo_train_args import parse_args
-from torch.quantization import get_default_qat_qconfig, prepare_qat, convert
 
 def main():
     args = parse_args()
@@ -18,27 +17,6 @@ def main():
         model = apply_custom_attention(model, clip=True, gate=args.gate, obo_variant=args.obo_variant, attention_variant=args.model_variant, zeta=1.0, gamma=-0.03)
     else:
         model = apply_custom_attention(model, clip=False, gate=args.gate, obo_variant=args.obo_variant, attention_variant=args.model_variant)
-
-    # (Optional) Example usage: tokenize a sample input and run a forward pass.
-    sample_text = "Hello, how are you today?"
-    inputs = tokenizer(sample_text, return_tensors="pt")
-    outputs = model(**inputs)
-    print("Logits shape:", outputs.logits.shape)
-
-    if args.quantize:
-        # Put the model in training mode.
-        model.train()
-        # Set the default QAT configuration. "fbgemm" is a common backend for CPU QAT.
-        model.qconfig = get_default_qat_qconfig("fbgemm")
-        # Disable quantization on embedding layers.
-        for name, module in model.named_modules():
-            if isinstance(module, torch.nn.Embedding):
-                module.qconfig = None
-        model = model.float()
-        # Prepare the model for QAT (this inserts fake quantization modules).
-        prepare_qat(model, inplace=True)
-        # (Optional) Move the model to CPU for QAT training.
-        model.to("cpu")
 
     dataset = load_dataset("wikitext", "wikitext-2-raw-v1")
 
@@ -89,25 +67,19 @@ def main():
         args.model_variant
     )
     output_dir = "olmo-" + model_variant
-    if args.quantize:
-        output_dir = "quant_" + output_dir
-    fp16_flag = False if args.quantize else True
     training_args = TrainingArguments(
         output_dir=output_dir,
         eval_strategy="steps",
-        eval_steps=500,
-        learning_rate=2e-5,
+        eval_steps=args.eval_steps,
+        learning_rate=args.lr,
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
-        # num_train_epochs=3,
-        weight_decay=0.01,
-        save_total_limit=3,
-        max_steps=10000,
-        save_steps=10000,
+        weight_decay=args.weight_decay,
+        max_steps=args.max_steps,
+        save_steps=args.save_steps,
         logging_dir="./logs",
         logging_steps=100,
-        fp16=fp16_flag,
     )
 
     # Initialize the Trainer with the data collator for dynamic padding
@@ -122,15 +94,8 @@ def main():
     # Fine-tune the model
     trainer.train()
 
-    if args.quantize:
-        # After training, convert the model to a quantized version.
-        model = convert(model.eval(), inplace=False)
-
     # Save the fine-tuned model and tokenizer
-    if args.quantize:
-        save_dir = "./fine-tuned-quant-olmo-" + model_variant
-    else:
-        save_dir = "./fine-tuned-olmo-" + model_variant
+    save_dir = "./fine-tuned-olmo-" + model_variant
     model.save_pretrained(save_dir)
     tokenizer.save_pretrained(save_dir)
 
