@@ -7,7 +7,6 @@ import pickle
 import json
 import prepare
 from tokenizers import (
-    NumericRangeTokenizer,
     SentencePieceTokenizer,
     TiktokenTokenizer,
     CustomTokenizer,
@@ -88,7 +87,6 @@ class TestTokenizers(unittest.TestCase):
     def setUp(self):
         # Sample data for testing
         self.sample_text = "Hello\nworld\nThis is a test."
-        self.numeric_data = "123\n456\n789"
         self.tokens_file = "tokens.txt"
 
         # Create a tokens file for custom tokenizers
@@ -143,19 +141,6 @@ class TestTokenizers(unittest.TestCase):
     # --------------------------------------------------------------------------
     # Tokenizer Tests
     # --------------------------------------------------------------------------
-    def test_numeric_range_tokenizer(self):
-        args = Namespace(min_token=100, max_token=1000)
-        tokenizer = NumericRangeTokenizer(args)
-        ids = tokenizer.tokenize(self.numeric_data)
-        detokenized = tokenizer.detokenize(ids)
-
-        console.print("[input]Input:[/input]")
-        console.print(self.numeric_data.strip(), style="input")
-        console.print("[output]Detokenized Output:[/output]")
-        console.print(detokenized, style="output")
-
-        self.assertEqual(self.numeric_data.strip(), detokenized)
-
     def test_sentencepiece_tokenizer(self):
         args = Namespace(
             vocab_size=30,
@@ -206,7 +191,7 @@ class TestTokenizers(unittest.TestCase):
             track_token_counts=True
         )
         tokenizer = TiktokenTokenizer(args)
-        
+
         # Test text with special tokens
         test_text = "Here is a <snac>4097</snac> and a <snac>100</snac> token test."
         ids = tokenizer.tokenize(test_text)
@@ -224,7 +209,7 @@ class TestTokenizers(unittest.TestCase):
         tokens = []
         colors = ["red", "green", "yellow", "blue", "magenta", "cyan"]
         color_idx = 0
-        
+
         # First pass: collect tokens
         while current_pos < data_len:
             matched = False
@@ -235,7 +220,7 @@ class TestTokenizers(unittest.TestCase):
                     current_pos += len(token)
                     matched = True
                     break
-            
+
             if not matched:
                 # Find the next special token or end of text
                 next_special = data_len
@@ -243,7 +228,7 @@ class TestTokenizers(unittest.TestCase):
                     pos = data.find(token, current_pos)
                     if pos != -1 and pos < next_special:
                         next_special = pos
-                
+
                 # Take the chunk up to the next special token and let tiktoken handle it
                 chunk = data[current_pos:next_special]
                 if chunk:
@@ -270,7 +255,7 @@ class TestTokenizers(unittest.TestCase):
         table.add_column("Token", style="cyan")
         table.add_column("Token ID", style="magenta")
         table.add_column("Type", style="yellow")
-        
+
         pos = 0
         for token, token_id, is_special in tokens:
             table.add_row(
@@ -395,30 +380,6 @@ class TestTokenizers(unittest.TestCase):
     # --------------------------------------------------------------------------
     # Tests for Token Counts (with histogram printing)
     # --------------------------------------------------------------------------
-    def test_numeric_range_tokenizer_counts(self):
-        args = Namespace(min_token=100, max_token=1000, track_token_counts=True)
-        tokenizer = NumericRangeTokenizer(args)
-        ids = tokenizer.tokenize(self.numeric_data)
-
-        with open("meta.pkl", "rb") as f:
-            meta = pickle.load(f)
-        token_counts = meta.get("token_counts", {})
-
-        # Retrieve the itos mapping so we can display actual tokens in the histogram
-        itos = meta.get("itos", {})
-
-        # Print histogram
-        self._print_token_count_histogram(token_counts, itos)
-
-        self.assertEqual(
-            sum(token_counts.values()), 
-            len(ids),
-            "Total token counts should match number of tokens."
-        )
-        for token_id in ids:
-            self.assertIn(token_id, token_counts, 
-                          "Each token id should appear in token_counts.")
-
     def test_sentencepiece_tokenizer_counts(self):
         with open("spm_input.txt", "w") as f:
             f.write(self.sample_text)
@@ -443,7 +404,7 @@ class TestTokenizers(unittest.TestCase):
         self._print_token_count_histogram(token_counts, itos)
 
         self.assertEqual(
-            sum(token_counts.values()), 
+            sum(token_counts.values()),
             len(ids),
             "Total token counts should match number of tokens for SentencePiece."
         )
@@ -464,7 +425,7 @@ class TestTokenizers(unittest.TestCase):
         self._print_token_count_histogram(token_counts, itos)
 
         self.assertEqual(
-            sum(token_counts.values()), 
+            sum(token_counts.values()),
             len(ids),
             "Total token counts should match for Tiktoken."
         )
@@ -485,7 +446,7 @@ class TestTokenizers(unittest.TestCase):
         self._print_token_count_histogram(token_counts, itos)
 
         self.assertEqual(
-            sum(token_counts.values()), 
+            sum(token_counts.values()),
             len(ids),
             "Total token counts should match for CustomTokenizer."
         )
@@ -506,7 +467,7 @@ class TestTokenizers(unittest.TestCase):
         self._print_token_count_histogram(token_counts, itos)
 
         self.assertEqual(
-            sum(token_counts.values()), 
+            sum(token_counts.values()),
             len(ids),
             "Total token counts should match for CharTokenizer."
         )
@@ -531,7 +492,7 @@ class TestTokenizers(unittest.TestCase):
         self._print_token_count_histogram(token_counts, itos)
 
         self.assertEqual(
-            sum(token_counts.values()), 
+            sum(token_counts.values()),
             len(ids),
             "Total token counts should match for CustomCharTokenizerWithByteFallback."
         )
@@ -574,7 +535,7 @@ class TestTokenizers(unittest.TestCase):
                 "--val_output", "test_val.bin",
                 "--track_token_counts"  # Add this flag
             ]
-            
+
             # Run prepare
             prepare.main()
 

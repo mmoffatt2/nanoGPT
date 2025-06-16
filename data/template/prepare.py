@@ -17,27 +17,53 @@ import pickle
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Tokenize text data using different methods.")
-    parser.add_argument("--tokens_file", type=str, default=None, help="Path to the file containing newline-separated tokens for tokenization")
-    parser.add_argument("--method", type=str, choices=["sentencepiece", "tiktoken", "char", "custom", "custom_char_byte_fallback", "numeric_range", "json_byte_fallback"], default="tiktoken", help="Tokenization method")
-    parser.add_argument("--train_input", type=str, required=True, help="Path to the training input file")
-    parser.add_argument("--train_output", type=str, required=True, help="Path to save the training output file")
-    parser.add_argument("--val_input", type=str, help="Path to the validation input file")
-    parser.add_argument("--val_output", type=str, help="Path to save the validation output file")
-    # SentencePiece only arguments
+
+    # Input/output arguments
+    parser.add_argument("-t", "--train_input", type=str, required=True, help="Path to the input text file")
+    parser.add_argument("-v", "--val_input", type=str, help="Path to validation input file. If not provided, train_input will be split using percentage_train")
+    parser.add_argument("--train_output", type=str, default="train.bin", help="Path to save the training output file")
+    parser.add_argument("--val_output", type=str, default="val.bin", help="Path to save the validation output file")
+    parser.add_argument("-p", "--percentage_train", type=float, default=0.9, help="Percentage of data to use for training (between 0 and 1) when val_input is not provided")
+
+    # Tokenizer selection and configuration
+    parser.add_argument("--method", type=str,
+                       choices=["sentencepiece", "tiktoken", "char", "custom", "custom_char_byte_fallback", "json_byte_fallback"],
+                       default="tiktoken", help="Tokenization method")
+
+    # SentencePiece arguments
     parser.add_argument("--vocab_size", type=int, default=500, help="Vocabulary size for SentencePiece model")
     parser.add_argument("--spm_model_file", type=str, default=None, help="Path to the pre-trained SentencePiece model file")
     parser.add_argument("--spm_vocab_file", type=str, default=None, help="Path to the SentencePiece vocabulary file")
     parser.add_argument("--skip_tokenization", action="store_true", help="Skip creation of .bin files")
-    # Tiktoken only arguments
-    parser.add_argument("-e", "--tiktoken_encoding", choices=["gpt2", "r50k_base", "p50k_base", "cl100k_base"], default="gpt2", help="Version of tiktoken encoding to utilize")
-    parser.add_argument("--additional_tokens_file", type=str, default=None, help="Path to JSON file containing additional special tokens for tiktoken (format: {'token': id})")
-    # Char only arguments
-    parser.add_argument("--reuse_chars", action="store_true", help="Reuse character list")
-    # Add argument for custom characters file
+
+    # Tiktoken arguments
+    parser.add_argument("-e", "--tiktoken_encoding",
+                       choices=["gpt2", "r50k_base", "p50k_base", "cl100k_base"],
+                       default="gpt2", help="Version of tiktoken encoding to utilize")
+    parser.add_argument("--additional_tokens_file", type=str, default=None,
+                       help="Path to JSON file containing additional special tokens for tiktoken (format: {'token': id})")
+
+    # Char tokenizer arguments
+    parser.add_argument("--reuse_chars", action="store_true", help="Reuse character list from meta.pkl")
+
+    # Custom tokenizer arguments
+    parser.add_argument("--tokens_file", type=str, default=None, help="Path to the file containing newline-separated tokens for tokenization")
     parser.add_argument("--custom_chars_file", type=str, default=None, help="Path to the file containing custom characters for the tokenizer")
-    # Add argument for tracking token counts
+    parser.add_argument("--json_tokens_file", type=str, default=None, help="Path to JSON file containing tokens for json_byte_fallback tokenizer")
+
+    # Additional options
     parser.add_argument("--track_token_counts", action="store_true", help="Track how often each token appears and store in meta.pkl")
+
     return parser.parse_args()
+
+def save_tokens(ids, output_file, dtype):
+    """Save tokenized data to a binary file with progress bar."""
+    total = len(ids)
+    batch_size = 1024 * 1024  # 1 million tokens per batch
+    with open(output_file, 'wb') as f_out:
+        for i in tqdm(range(0, total, batch_size), desc=f"Saving {output_file}"):
+            batch = ids[i:i+batch_size]
+            np.array(batch, dtype=dtype).tofile(f_out)
 
 def main():
     args = parse_arguments()
@@ -46,16 +72,20 @@ def main():
     with open(args.train_input, 'r') as f:
         train_data = f.read()
 
-    # Load validation data if provided
-    val_data = None
+    # Handle validation data based on mode
     if args.val_input:
+        # Direct train/val files mode
         with open(args.val_input, 'r') as f:
             val_data = f.read()
+    else:
+        # Automatic splitting mode
+        n = len(train_data)
+        train_data, val_data = train_data[:int(n * args.percentage_train)], train_data[int(n * args.percentage_train):]
+        if args.percentage_train == 1.0:
+            val_data = None
 
     # Initialize tokenizer based on method
-    if args.method == "numeric_range":
-        tokenizer = NumericRangeTokenizer(args)
-    elif args.method == "sentencepiece":
+    if args.method == "sentencepiece":
         tokenizer = SentencePieceTokenizer(args, input_files=args.train_input)
     elif args.method == "tiktoken":
         tokenizer = TiktokenTokenizer(args)
@@ -72,29 +102,18 @@ def main():
 
     # Tokenize data
     train_ids = tokenizer.tokenize(train_data)
-    if val_data:
-        val_ids = tokenizer.tokenize(val_data)
-    else:
-        val_ids = None
-
-    # Save tokenized data with progress bar
-    def save_tokens(ids, output_file, dtype):
-        total = len(ids)
-        batch_size = 1024 * 1024  # 1 million tokens per batch
-        with open(output_file, 'wb') as f_out:
-            for i in tqdm(range(0, total, batch_size), desc=f"Saving {output_file}"):
-                batch = ids[i:i+batch_size]
-                np.array(batch, dtype=dtype).tofile(f_out)
+    val_ids = tokenizer.tokenize(val_data) if val_data is not None else None
 
     # Determine dtype based on token IDs
     max_token_id = max(max(train_ids), max(val_ids) if val_ids else 0)
     dtype = np.uint32 if max_token_id > 65535 else np.uint16
 
+    # Save tokenized data
     save_tokens(train_ids, args.train_output, dtype)
-    if val_data and val_ids:
+    if val_ids is not None:
         save_tokens(val_ids, args.val_output, dtype)
 
-    # Save additional metadata for tiktoken
+    # Save additional metadata for tiktoken if needed
     if args.method == "tiktoken" and args.additional_tokens_file:
         with open(args.additional_tokens_file, 'r') as f:
             additional_tokens = json.load(f)

@@ -42,56 +42,6 @@ class Tokenizer:
                 return meta.get(keyname)
         return None
 
-
-class NumericRangeTokenizer(Tokenizer):
-    def __init__(self, args):
-        super().__init__(args)
-        self.min_token = args.min_token
-        self.max_token = args.max_token
-        self.stoi = None
-        self.itos = None
-
-    def tokenize(self, data):
-        tokens = []
-        encountered_tokens = set()
-        lines = data.strip().split('\n')
-        for line in tqdm(lines, desc="Tokenizing Numeric Range"):
-            try:
-                num = int(line)
-                if self.min_token <= num <= self.max_token:
-                    tokens.append(num)
-                    encountered_tokens.add(num)
-                else:
-                    print(f"Warning: Number {num} is outside the specified range and will be skipped.")
-            except ValueError:
-                print(f"Warning: Invalid number '{line}' will be skipped.")
-
-        all_tokens = list(range(self.max_token, -1, -1))
-        self.stoi = {str(num): i for i, num in enumerate(all_tokens)}
-        self.itos = {i: str(num) for i, num in enumerate(all_tokens)}
-
-        indexed_tokens = []
-        for token in tokens:
-            idx = self.stoi[str(token)]
-            self.record_token(idx)
-            indexed_tokens.append(idx)
-
-        meta = {
-            "vocab_size": len(self.stoi),
-            "tokenizer": "numeric_range",
-            "min_token": self.min_token,
-            "max_token": self.max_token,
-            "stoi": self.stoi,
-            "itos": self.itos,
-            "encountered_tokens": sorted(encountered_tokens, reverse=True)
-        }
-        self.finalize_meta(meta)
-        return indexed_tokens
-
-    def detokenize(self, ids):
-        return '\n'.join([self.itos[id] for id in ids])
-
-
 class SentencePieceTokenizer(Tokenizer):
     def __init__(self, args, input_files=None):
         super().__init__(args)
