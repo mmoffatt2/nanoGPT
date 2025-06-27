@@ -1,10 +1,10 @@
 # prepare.py
 import json
+import os
 import pickle
 import argparse
 import numpy as np
-import os
-from tokenizer_options import (
+from tokenizers import (
     NumericRangeTokenizer,
     SentencePieceTokenizer,
     TiktokenTokenizer,

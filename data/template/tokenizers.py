@@ -4,15 +4,10 @@ import pickle
 import tempfile
 import sentencepiece as spm
 import tiktoken
-<<<<<<< HEAD:data/template/tokenizer_options.py
-from tqdm import tqdm  # For progress bars
-from transformers import AutoTokenizer
-=======
 from tqdm import tqdm
 from collections import defaultdict
 import json
-
->>>>>>> master:data/template/tokenizers.py
+from transformers import AutoTokenizer
 
 class Tokenizer:
     def __init__(self, args):

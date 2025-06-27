@@ -2,7 +2,7 @@
 
 import unittest
 import os
-import sys  # Import sys to exit with error codes
+import sys
 import pickle
 import json
 from tokenizers import (
