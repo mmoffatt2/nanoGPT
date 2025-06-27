@@ -1,3 +1,4 @@
+# model.py
 """
 Full definition of a GPT Language Model, all of it in this single file.
 References:
@@ -10,9 +11,8 @@ https://github.com/huggingface/transformers/blob/main/src/transformers/models/gp
 import math
 import inspect
 import sys
-import re
 from rich import print
-from torch.nn.attention.flex_attention import flex_attention, create_block_mask
+import copy
 
 import numpy as np
 
@@ -27,6 +27,9 @@ from gpt_conf import GPTConfig
 import torch.utils.checkpoint as checkpoint
 
 # Variations
+from variations.attention_variations import attention_dictionary
+from variations.mlp_variations import get_mlp_instance
+from variations.moe_variations import MoELayer
 from variations.lsv_variations import lsv_dictionary
 from variations.softmax_variations import softmax_dictionary
 from variations.norm_variations import norm_dictionary
@@ -36,504 +39,11 @@ from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
 from variations.from_pretrained_variations import from_pretrained, from_pretrained_qwen
 from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
+from quantization.quant_utils import set_variant, create_activation_buffers
 
-def create_shared_param_group(layer_type, config):
+from initializations.initialization_variations import init_dictionary
 
-    # explore MoE layers being reflected symmetrically
-
-    shared_size = None
-    shared_sym = None # if true, output array is symmetrical
-    layer_block = None
-    shared_group = []
-
-    if layer_type == "mlp":
-        shared_size = config.shared_mlp_size
-        shared_sym = config.shared_mlp_sym
-    elif layer_type == "attn":
-        shared_size = config.shared_attn_size
-        shared_sym = config.shared_attn_sym
-    else:
-        sys.exit(f"{layer_type} not supported, exiting")
-
-    # if attn layer check if using shared fire embeddings
-    fire_pos_enc = None
-    if layer_type == "attn" and config.shared_fire_embeddings:
-        fire_pos_enc = FIRE(config, num_heads=config.n_head)
-
-    for i in range (config.n_layer):
-
-        # Create new layer block every "shared_size"
-        if i % shared_size == 0:
-            if layer_type == "mlp":
-                if config.use_moe and i % config.moe_layer_freq == 0:
-                    # this iter is an moe layer iter
-                    layer_block = MoELayer(config)
-                else:
-                    layer_block = MLP(config)
-            elif layer_type == "attn":
-                layer_block = CausalSelfAttention(config, fire_pos_enc=fire_pos_enc)
-            else:
-                sys.exit(f"{layer_type} not supported, exiting")
-
-        # Add layer block
-        shared_group.append(layer_block)
-
-        # If symmetrical and halfway, then mirror extend and exit
-        if shared_sym:
-            # Even
-            if config.n_layer % 2 == 0:
-                if i == (config.n_layer // 2 - 1):
-                    # Append going backwards
-                    for j in range(i+1):
-                        shared_group.append(shared_group[i - j])
-                    return shared_group
-            # Odd
-            else:
-                if i == (config.n_layer // 2):
-                    # Append going backwards
-                    for j in range(i):
-                        shared_group.append(shared_group[i - j])
-                    return shared_group
-    return shared_group
-
-def set_variant(variant, default_variant):
-    # If variant is false or None, then set to provided default value
-    if not variant:
-        return default_variant
-    return variant
-
-def create_activation_buffers(obj, arg):
-    arg_str = arg.split("quantize_")[1]
-    obj.register_buffer(arg_str, None)
-    obj.register_buffer(f"{arg_str}_scale", None)
-    obj.register_buffer(f"{arg_str}_zero_point", None)
-
-class CausalSelfAttention(nn.Module):
-    def __init__(self, config, fire_pos_enc=None):
-        super().__init__()
-
-        self.full_quant_iteration = config.full_quant_iteration
-        self.eval_interval = config.eval_interval
-        self.start_quant_level = config.start_quant_level
-        self.quant_scheduler = config.quant_scheduler
-
-        if (config.n_kv_group == None):
-            config.n_kv_group = config.n_head
-        else:
-            assert config.n_embd % config.n_kv_group == 0
-
-        self.quantization_attn_dict = {}
-        self.quantization_attn_dict["activations_quant_method"] = config.activations_quant_method
-        for arg, val in vars(config).items():
-            # Set each attention Activation precision and method
-            if arg.startswith("quantize_") and "attn_act" in arg and arg.endswith("_bits"):
-                self.quantization_attn_dict[arg] = set_variant(val, config.quantize_attn_act_bits)
-            elif arg.startswith("quantize_") and "attn_act" in arg:
-                self.quantization_attn_dict[arg] = set_variant(val, config.quantize_attn_act)
-                if config.store_activations and arg != "quantize_attn_act" and self.quantization_attn_dict[arg]:
-                    create_activation_buffers(self, arg)
-            # Set each attention Linear precision and method
-            elif arg.startswith("quantize_") and "linear_attn" in arg and arg.endswith("_bits"):
-                self.quantization_attn_dict[arg] = set_variant(val, config.quantize_linear_bits)
-            elif arg.startswith("quantize_") and "linear_attn" in arg and arg.endswith("_method"):
-                self.quantization_attn_dict[arg] = set_variant(val, config.quantize_linear_method)
-
-        self.linear_variant_q = linear_dictionary[set_variant(config.linear_variant_q, config.linear_variant_attn)]
-        self.linear_variant_k = linear_dictionary[set_variant(config.linear_variant_k, config.linear_variant_attn)]
-        self.linear_variant_v = linear_dictionary[set_variant(config.linear_variant_v, config.linear_variant_attn)]
-        self.linear_variant_attn_proj = linear_dictionary[set_variant(config.linear_variant_attn_proj, config.linear_variant_attn)]
-
-        # key, query, value projections for all heads, but in a batch
-        self.c_attn_q = self.linear_variant_q(config.n_embd, config.n_embd, config, self.quantization_attn_dict["quantize_linear_attn_q_method"], self.quantization_attn_dict["quantize_linear_attn_q_bits"], bias=config.qkv_bias if config.qkv_bias else config.bias)
-        self.n_head = config.n_head
-        if config.n_kv_group == None:
-            self.n_kv_group = config.n_head
-        else:
-            assert config.n_head % config.n_kv_group == 0
-            self.n_kv_group = config.n_kv_group
-
-        self.kv_dim = (config.n_embd // config.n_head) * self.n_kv_group
-        self.c_attn_k = self.linear_variant_k(config.n_embd, self.kv_dim, config, self.quantization_attn_dict["quantize_linear_attn_k_method"], self.quantization_attn_dict["quantize_linear_attn_k_bits"], bias=config.qkv_bias if config.qkv_bias else config.bias)
-        self.c_attn_v = self.linear_variant_v(config.n_embd, self.kv_dim, config, self.quantization_attn_dict["quantize_linear_attn_v_method"], self.quantization_attn_dict["quantize_linear_attn_v_bits"], bias=config.qkv_bias if config.qkv_bias else config.bias)
-        self.c_proj = self.linear_variant_attn_proj(config.n_embd, config.n_embd, config, self.quantization_attn_dict["quantize_linear_attn_proj_method"], self.quantization_attn_dict["quantize_linear_attn_proj_bits"], bias=config.bias)
-
-        # Regularization
-        self.attn_dropout = nn.Dropout(config.dropout)
-        self.resid_dropout = nn.Dropout(config.dropout)
-        self.dropout = config.dropout
-
-        # Embedding
-        self.n_embd = config.n_embd
-        self.dropout = config.dropout
-        self.n_embd = config.n_embd
-        self.gate = config.gate
-        self.use_fire_embeddings = None
-        self.disable_flash_attention = config.disable_flash_attention
-        if config.use_fire_embeddings:
-            self.use_fire_embeddings = config.use_fire_embeddings
-            if fire_pos_enc is not None:
-                self.fire_pos_enc = fire_pos_enc
-                print("shared fire")
-            else:
-                self.fire_pos_enc = FIRE(config, num_heads=config.n_head)
-                print("indiv fire")
-
-        # Rotary Positional Embeddings
-        self.rotary_emb_q = None
-        self.rotary_emb_k = None
-        if config.use_rotary_embeddings:
-            # Note: size is the size of the head dimension
-            if config.rope_variant == "soap":
-                self.sym_rot_num_angles = config.sym_rot_num_angles
-                self.rotary_emb_q = SymmetricalOverlapAngularPositions(config, size=config.n_embd // self.n_head, num_angles=self.sym_rot_num_angles)
-                self.rotary_emb_k = SymmetricalOverlapAngularPositions(config, size=config.n_embd // self.n_head, num_angles=self.sym_rot_num_angles)
-            elif config.rope_variant == "rope":
-                self.rotary_emb_q = RotaryEmbedding(config, size=config.n_embd // self.n_head)
-                self.rotary_emb_k = RotaryEmbedding(config, size=config.n_embd // self.n_head)
-
-        # Sliding window size
-        self.window_size = config.window_size
-        print(f"sliding window size: {self.window_size}")
-
-        # Using flex attention
-        self.use_flex_attn = config.use_flex_attn
-
-        # Gating
-        self.gate = config.gate
-
-        # Fire Embeddings
-        self.use_fire_embeddings = None
-        if config.use_fire_embeddings:
-            self.use_fire_embeddings = config.use_fire_embeddings
-            if fire_pos_enc is not None:
-                self.fire_pos_enc = fire_pos_enc
-                print("shared fire")
-            else:
-                self.fire_pos_enc = FIRE(config, num_heads=config.n_head)
-                print("indiv fire")
-
-        # Rotary Positional Embeddings
-        self.rotary_emb_q = None
-        self.rotary_emb_k = None
-        if config.use_rotary_embeddings:
-            # Note: size is the size of the head dimension
-            if config.rope_variant == "soap":
-                self.sym_rot_num_angles = config.sym_rot_num_angles
-                self.rotary_emb_q = SymmetricalOverlapAngularPositions(config, size=config.n_embd // self.n_head, num_angles=self.sym_rot_num_angles)
-                self.rotary_emb_k = SymmetricalOverlapAngularPositions(config, size=config.n_embd // self.n_head, num_angles=self.sym_rot_num_angles)
-            elif config.rope_variant == "rope":
-                self.rotary_emb_q = RotaryEmbedding(config, size=config.n_embd // self.n_head)
-                self.rotary_emb_k = RotaryEmbedding(config, size=config.n_embd // self.n_head)
-
-
-        self.flash = True
-        if self.window_size is not None:
-            # TODO: look into supporting sliding window attn for flash attn
-            self.flash = False
-            print("flash attention removed due to windowed attention")
-
-        if self.n_kv_group != self.n_head:
-            self.flash = False
-            print("flash attention removed due to GQA")
-
-        if self.use_fire_embeddings:
-            self.flash = False
-            print("flash attention removed due to FIRE")
-
-        # Can't use flash attention if we want to manually quantize most input/output activations in attn
-        for key, val in self.quantization_attn_dict.items():
-            if key.startswith("quantize_") and val == True:
-                self.flash = False
-                print("flash attention removed due to Quantization")
-                break
-
-        if self.disable_flash_attention:
-            self.flash = False
-
-        # Softmax Variant Selection
-        self.softmax_variant_attn = config.softmax_variant_attn
-        if self.softmax_variant_attn == "softmax":
-            # Enable flash attention, which is compatible with 'softmax'
-            if self.disable_flash_attention or self.flash == False:
-                print("setting non-flash softmax attn")
-            else:
-                self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-                print("setting flash attn")
-        else:
-            # Remove flash attention (only compatible with 'softmax')
-            print("flash attention removed due to softmax alternative")
-            self.flash = False
-            # Set softmax_layer_attn to custom softmax alternative
-            self.softmax_layer_attn = softmax_dictionary[config.softmax_variant_attn](config)
-
-        if (not self.flash) and (not self.use_flex_attn):
-            print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
-            # causal mask to ensure that attention is only applied to the left in the input sequence
-            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                        .view(1, 1, config.block_size, config.block_size))
-
-    # Flex Attention Related
-    def sliding_window_causal(self, b, h, q_idx, kv_idx):
-        causal_mask = q_idx >= kv_idx
-        window_mask = q_idx - kv_idx <= self.window_size
-        return causal_mask & window_mask
-
-    def get_block_mask(self, T, device):
-        if T not in self.block_masks:
-            block_mask = create_block_mask(
-                    self.sliding_window_causal,
-                    B=None,
-                    H=None,
-                    Q_LEN=T,
-                    KV_LEN=T,
-                    device=device
-                    )
-            self.block_masks[T] = block_mask
-        else:
-            block_mask = self.block_masks[T]
-        return block_mask
-    # End Flex Attention Related
-
-    def forward(self, x, iter_num):
-        B, T, C = x.size() # batch size, sequence length, embedding dimensionality (n_embd)
-
-        if self.quantization_attn_dict["quantize_attn_act_input"]:
-            num_bits = self.quantization_attn_dict["quantize_attn_act_input_bits"]
-            quant_method = self.quantization_attn_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "attn_act_input", x, num_bits, quant_method, iter_num)
-
-        q = self.c_attn_q(x)
-        k = self.c_attn_k(x)
-        v = self.c_attn_v(x)
-
-        if self.window_size is not None:
-            if self.use_flex_attn is not None:
-                self.block_masks = {}
-            else:
-                self.window_mask = torch.ones((1, 1, T, T), device=x.device)
-                self.window_mask = torch.triu(self.window_mask, diagonal=-self.window_size)
-                self.window_mask = self.bias[:,:,:T,:T] * self.window_mask
-
-        if self.gate:
-            if self.n_kv_group == self.n_head:
-                Gating = nn.Linear(self.n_embd, self.n_embd, bias=True, device=x.device)
-                gate_ = torch.sigmoid(Gating(x))
-                q = q * gate_
-                k = k * gate_
-                v = v * gate_
-            else:
-                # TODO: Test more methods to merge Attention Gates with GQA
-                # TODO: Evaluate each method's ability to even out parameter sizes
-                Gating_q = nn.Linear(self.n_embd, self.n_embd, bias=True, device=x.device)
-                Gating_kv = nn.Linear(self.n_embd, self.kv_dim, bias=True, device=x.device)
-                gate_qx = Gating_q(x)
-                gate_q = torch.sigmoid(gate_qx)
-                gate_kv = torch.sigmoid(Gating_kv(gate_qx))
-                q = q * gate_q
-                k = k * gate_kv
-                v = v * gate_kv
-
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2) # (B, n_h, T, hs)
-        k = k.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
-        v = v.view(B, T, self.n_kv_group, C // self.n_head).transpose(1, 2) # (B, n_kv, T, hs)
-
-        # rotate q and k before evaluating with the heads
-        if (self.rotary_emb_q is not None) and (self.rotary_emb_k is not None):
-            q = self.rotary_emb_q(q)
-            k = self.rotary_emb_k(k)
-
-        y = None
-        # causal self-attention; Self-attend: (B, nh, T, hs) x (B, nh, hs, T) -> (B, nh, T, T)
-        if self.flash:
-            # efficient attention using Flash Attention CUDA kernels
-            y = torch.nn.functional.scaled_dot_product_attention(q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0, is_causal=True)
-        elif self.use_flex_attn and self.window_size is not None:
-            block_mask = self.get_block_mask(T, x.device)
-            y = torch.nn.attention.flex_attention.flex_attention(q, k, v, block_mask=block_mask)
-        else:
-            if self.quantization_attn_dict["quantize_attn_act_qk_mult_q_input"]:
-                num_bits = self.quantization_attn_dict["quantize_attn_act_qk_mult_q_input_bits"]
-                quant_method = self.quantization_attn_dict["activations_quant_method"]
-                q = fake_quantize_act(self, "attn_act_qk_mult_q_input", q, num_bits, quant_method, iter_num)
-            if self.quantization_attn_dict["quantize_attn_act_qk_mult_k_input"]:
-                num_bits = self.quantization_attn_dict["quantize_attn_act_qk_mult_k_input_bits"]
-                quant_method = self.quantization_attn_dict["activations_quant_method"]
-                k = fake_quantize_act(self, "attn_act_qk_mult_k_input", k, num_bits, quant_method, iter_num)
-
-            att = None
-            # manual implementation of attention
-            if self.n_head != self.n_kv_group:
-                k_repeated = k.repeat_interleave(self.n_head // self.n_kv_group, dim=1)
-                att = (q @ k_repeated.transpose(-2, -1)) / math.sqrt(k.size(-1))
-            else:
-                att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-
-            # apply masks
-            if self.window_size is not None:
-                # add mask for sliding window attention
-                att = att.masked_fill(self.window_mask == 0, float('-inf'))
-            else:
-                # regular lower triangle attention
-                att = att.masked_fill(self.bias[:,:,:T,:T].to(x.device) == 0, float('-inf'))
-
-            # fire position embeddings
-            if self.use_fire_embeddings is not None:
-                # add learned fire bias
-                att = att + self.fire_pos_enc(x)
-
-            if self.quantization_attn_dict["quantize_attn_act_softmax_input"]:
-                num_bits = self.quantization_attn_dict["quantize_attn_act_softmax_input_bits"]
-                quant_method = self.quantization_attn_dict["activations_quant_method"]
-                att = fake_quantize_act(self, "attn_act_softmax_input", att, num_bits, quant_method, iter_num, causal_mask=True)
-
-            # softmax variation
-            if self.softmax_variant_attn != 'softmax':
-                att = self.softmax_layer_attn(att)
-            else:
-                att = F.softmax(att, dim=-1)
-
-            att = self.attn_dropout(att)
-
-            if self.quantization_attn_dict["quantize_attn_act_pv_mult_p_input"]:
-                num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_p_input_bits"]
-                quant_method = self.quantization_attn_dict["activations_quant_method"]
-                att = fake_quantize_act(self, "attn_act_pv_mult_p_input", att, num_bits, quant_method, iter_num)
-            if self.quantization_attn_dict["quantize_attn_act_pv_mult_v_input"]:
-                num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_v_input_bits"]
-                quant_method = self.quantization_attn_dict["activations_quant_method"]
-                v = fake_quantize_act(self, "attn_act_pv_mult_v_input", v, num_bits, quant_method, iter_num)
-
-            if self.n_head != self.n_kv_group:
-                v_repeated = v.repeat_interleave(self.n_head // self.n_kv_group, dim=1)
-                y = att @ v_repeated # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-            else:
-                y = att @ v # (B, nh, T, T) x (B, nh, T, hs) -> (B, nh, T, hs)
-
-        if self.quantization_attn_dict["quantize_attn_act_pv_mult_output"]:
-            num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_output_bits"]
-            quant_method = self.quantization_attn_dict["activations_quant_method"]
-            y = fake_quantize_act(self, "attn_act_pv_mult_output", y, num_bits, quant_method, iter_num)
-
-        y = y.transpose(1, 2).contiguous().view(B, T, C) # re-assemble all head outputs side by side
-
-        # output projection
-        y = self.resid_dropout(self.c_proj(y))
-
-        if self.quantization_attn_dict["quantize_attn_act_output"]:
-            num_bits = self.quantization_attn_dict["quantize_attn_act_output_bits"]
-            quant_method = self.quantization_attn_dict["activations_quant_method"]
-            y = fake_quantize_act(self, "attn_act_output", y, num_bits, quant_method, iter_num)
-
-        return y
-
-
-class MLP(nn.Module):
-    def __init__(self, config):
-        super().__init__()
-
-        self.full_quant_iteration = config.full_quant_iteration
-        self.eval_interval = config.eval_interval
-
-        # Select "mlp variant"
-        self.mlp_variant = config.mlp_variant
-
-        self.start_quant_level = config.start_quant_level
-        self.quant_scheduler = config.quant_scheduler
-
-        # If "MLP Variant" is KAN, then we skip MLP specific items
-        if self.mlp_variant == "kan":
-            self.kan = linear_dictionary["kan"](config.n_embd, config.n_embd, config=config)
-        else:
-            # Select activation variant
-            self.activation_variant = activation_dictionary[config.activation_variant](config=config)
-
-            # Sets the class of linear for MLP
-            self.linear_variant_mlp_up = linear_dictionary[set_variant(config.linear_variant_mlp_up, config.linear_variant_mlp)]
-            self.linear_variant_mlp_down = linear_dictionary[set_variant(config.linear_variant_mlp_down, config.linear_variant_mlp)]
-
-            self.quantization_mlp_dict = {}
-            self.quantization_mlp_dict["activations_quant_method"] = config.activations_quant_method
-
-            # Set quantization parameters for MLP
-            for arg, val in vars(config).items():
-                # Set MLP Activation precision and quantization method
-                if arg.startswith("quantize_") and "mlp_act" in arg and arg.endswith("_bits"):
-                    self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_mlp_act_bits)
-                elif arg.startswith("quantize_") and "mlp_act" in arg:
-                    self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_mlp_act)
-                    if config.store_activations and arg != "quantize_mlp_act" and self.quantization_mlp_dict[arg]:
-                        create_activation_buffers(self, arg)
-                # Set MLP Linear Weight precision and quantization method
-                elif arg.startswith("quantize_") and "linear_mlp" in arg and arg.endswith("_bits"):
-                    self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_linear_bits)
-                elif arg.startswith("quantize_") and "linear_mlp" in arg and arg.endswith("_method"):
-                    self.quantization_mlp_dict[arg] = set_variant(val, config.quantize_linear_method)
-
-            # Instantiate Linear Layers
-            intermediate_size = round(config.mlp_expansion_factor * config.n_embd)
-            if self.mlp_variant == "mlp":
-                self.c_fc = self.linear_variant_mlp_up(config.n_embd, intermediate_size, config, self.quantization_mlp_dict["quantize_linear_mlp_up_method"], self.quantization_mlp_dict["quantize_linear_mlp_up_bits"], bias=config.bias)
-                self.c_proj = self.linear_variant_mlp_down(intermediate_size, config.n_embd, config, self.quantization_mlp_dict["quantize_linear_mlp_down_method"], self.quantization_mlp_dict["quantize_linear_mlp_down_bits"], bias=config.bias)
-            elif self.mlp_variant == "swiglu":
-                self.c_fc_in1 = self.linear_variant_mlp_up(config.n_embd, intermediate_size, config, self.quantization_mlp_dict["quantize_linear_mlp_up_method"], self.quantization_mlp_dict["quantize_linear_mlp_up_bits"])
-                self.c_fc_in2 = self.linear_variant_mlp_up(config.n_embd, intermediate_size, config, self.quantization_mlp_dict["quantize_linear_mlp_up_method"], self.quantization_mlp_dict["quantize_linear_mlp_up_bits"])
-                self.c_fc_out = self.linear_variant_mlp_down(intermediate_size, config.n_embd, config, self.quantization_mlp_dict["quantize_linear_mlp_down_method"], self.quantization_mlp_dict["quantize_linear_mlp_down_bits"])
-
-        self.dropout = nn.Dropout(config.dropout)
-
-    def forward(self, x, iter_num):
-
-        if self.quantization_mlp_dict["quantize_mlp_act_input"]:
-            num_bits = self.quantization_mlp_dict["quantize_mlp_act_input_bits"]
-            quant_method = self.quantization_mlp_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "mlp_act_input", x, num_bits, quant_method, iter_num)
-
-        if self.mlp_variant == "kan":
-            x = self.kan(x)
-
-        elif self.mlp_variant == "mlp":
-            x = self.c_fc(x)
-
-            if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
-                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
-                quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x = fake_quantize_act(self, "mlp_act_activation_input", x, num_bits, quant_method, iter_num)
-
-            x = self.activation_variant(x)
-
-            if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
-                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
-                quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x = fake_quantize_act(self, "mlp_act_activation_output", x, num_bits, quant_method, iter_num)
-
-            x = self.c_proj(x)
-
-        elif self.mlp_variant == "swiglu":
-            x_in1 = self.c_fc_in1(x)
-
-            if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
-                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
-                quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x_in1 = fake_quantize_act(self, "mlp_act_activation_input", x_in1, num_bits, quant_method, iter_num)
-
-            x_in1 = self.activation_variant(x_in1)
-
-            if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
-                num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
-                quant_method = self.quantization_mlp_dict["activations_quant_method"]
-                x_in1 = fake_quantize_act(self, "mlp_act_activation_output", x_in1, num_bits, quant_method, iter_num)
-
-            x_in2 = self.c_fc_in2(x)
-            x_out = x_in1 * x_in2
-            x = self.c_fc_out(x_out)
-
-        x = self.dropout(x)
-
-        if self.quantization_mlp_dict["quantize_mlp_act_output"]:
-            num_bits = self.quantization_mlp_dict["quantize_mlp_act_output_bits"]
-            quant_method = self.quantization_mlp_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "mlp_act_output", x, num_bits, quant_method, iter_num)
-        return x
+from shared_param_utils import SharedParamGroupCreator
 
 class Block(nn.Module):
     def __init__(self, config, mlp=None, attn=None):
@@ -551,38 +61,83 @@ class Block(nn.Module):
 
         # Allow for sharing attn between blocks
         if attn is None:
-            self.attn = CausalSelfAttention(config)
+            self.attn = attention_dictionary[config.attention_variant](config)
         else:
             self.attn = attn
 
         # Allow for sharing mlp between blocks
         if mlp is None:
-            self.mlp = MLP(config)
+            self.mlp = get_mlp_instance(config)
         else:
             self.mlp = mlp
 
-    def forward(self, x, iter_num):
+    def forward(self, x, iter_num, mlp_res=None):
         def custom_forward(*inputs):
             x = inputs[0]
+            iter_num = inputs[1]
+            mlp_res = inputs[2]
+
             if self.use_post_ln:
                 if self.use_parallel_mlp:
                     x = self.ln_1(x + self.attn(x, iter_num) + self.mlp(x, iter_num))
                 else:
                     x = self.ln_1(x + self.attn(x, iter_num))
                     x = self.ln_2(x + self.mlp(x, iter_num))
+                return x, mlp_res
             else:
                 if self.use_parallel_mlp:
                     ln_1 = self.ln_1(x)
-                    x = x + self.attn(ln_1, iter_num) + self.mlp(ln_1, iter_num)
+                    mlp, mlp_res = self.mlp(ln_1, iter_num)
+                    x = x + self.attn(ln_1, iter_num) + mlp
+                    return x, mlp_res
                 else:
                     x = x + self.attn(self.ln_1(x), iter_num)
-                    x = x + self.mlp(self.ln_2(x), iter_num)
-            return x
+                    mlp, mlp_res = self.mlp(self.ln_2(x), iter_num, mlp_res)
+                    x = x + mlp
+                    return x, mlp_res
 
         if self.use_gradient_checkpointing and x.requires_grad:
             return checkpoint.checkpoint(custom_forward, x, use_reentrant=False)
         else:
-            return custom_forward(x)
+            return custom_forward(x, iter_num, mlp_res)
+
+class LearnedPositionEmbedding(nn.Module):
+    """
+    Learns a position-aware residual using the same Block modules (transformer.h)
+    and config as the main GPT.  Each instance processes token+pos embeddings
+    through its own Block stack and returns a (b, t, n_embd) tensor.
+    """
+    def __init__(self, config):
+        super().__init__()
+        self.lpe_config = copy.deepcopy(config)
+
+        # override the config values by mapping config.lpe_value -> config.value
+        for key, val in vars(config).items():
+            if key.startswith('lpe_') and val is not None:
+                # strip 'lpe_' prefix to map to the actual config field
+                core_key = key[len('lpe_'):]
+                setattr(self.lpe_config, core_key, val)
+
+        if self.lpe_config.use_abs_pos_embeddings:
+            self.wpe = nn.Embedding(self.lpe_config.block_size, self.lpe_config.n_embd)
+
+        self.drop = nn.Dropout(config.dropout)
+        # reuse the same Block init as GPT.transformer.h
+        self.blocks = nn.ModuleList([Block(self.lpe_config) for _ in range(self.lpe_config.n_layer)])
+
+    def forward(self, b, t, x, iter_num=None):
+        # add absolute position embeddings if used
+        if self.lpe_config.use_abs_pos_embeddings:
+            pos = torch.arange(t, dtype=torch.long, device=x.device)
+            pos_emb = self.wpe(pos)
+            x = x + pos_emb
+        # dropout on combined embedding
+        x = self.drop(x)
+        # pass through Block modules
+        mlp_res = None
+        for block in self.blocks:
+            x, mlp_res = block(x, iter_num, mlp_res)
+        return x
 
 class GPT(nn.Module):
 
@@ -596,14 +151,24 @@ class GPT(nn.Module):
 
         self.config = config
 
-        # Shared Parameters MLP
-        shared_mlp_array = create_shared_param_group("mlp", config)
-        # Shared Parameters Attention
-        shared_attn_array = create_shared_param_group("attn", config)
+        # Final-logit softcapping
+        self.final_logit_softcapping = config.final_logit_softcapping
+
+        # Use the new SharedParamGroupCreator for MLP and Attn layers
+        spg_creator = SharedParamGroupCreator(config)
+        shared_mlp_array = spg_creator.create_shared_param_group("mlp")
+        shared_attn_array = spg_creator.create_shared_param_group("attn")
+
+        # General weight tying
+        self.wte_weight_tying = config.wte_weight_tying
 
         # Factorization Parameters
         self.n_embd_wte = config.n_embd_wte
         self.n_embd_wte_scale_tying = config.n_embd_wte_scale_tying
+
+        # Embedding scale
+        if config.use_embedding_scale:
+            self.embedding_scale = nn.Parameter(torch.sqrt(torch.tensor(config.n_embd)))
 
         # Learned Steering Vectors
         self.use_lsv = config.use_lsv
@@ -616,6 +181,13 @@ class GPT(nn.Module):
             self.lsv_variant = config.lsv_variant
             self.lsv_matrix = lsv_dictionary[self.lsv_variant](config)
 
+        if config.n_lpe != 0:
+            self.learned_position_embeddings = nn.ModuleList([
+                LearnedPositionEmbedding(config)
+                for _ in range(config.n_lpe)
+                ])
+
+        self.transformer = nn.ModuleDict(dict())
         # Configure wte, with optional quantization and factoring
         if config.quantize_wte:
             if config.n_embd_wte:
@@ -624,20 +196,28 @@ class GPT(nn.Module):
             else:
                 # no factorization
                 word_embd = QuantizedEmbedding(config.vocab_size, config.n_embd, config.quantize_wte_method, config.quantize_wte_bits)
+            self.transformer['wte'] = word_embd
         else:
             if config.n_embd_wte:
                 # If factorization is set
                 word_embd = nn.Embedding(config.vocab_size, config.n_embd_wte)
+                self.transformer['wte'] = word_embd
             else:
-                # no factorization
-                word_embd = nn.Embedding(config.vocab_size, config.n_embd)
+                #TODO: currently multicontext is in own category, add support later for WTE factorization
+                if config.multicontext:
+                    for i, vocab_size in enumerate(self.config.vocab_sizes):
+                        embedding_layer = nn.Embedding(vocab_size, config.n_embd)
+                        self.transformer[f'wte_{i}'] = embedding_layer
+                        self.transformer[f'lm_head_{i}'] = nn.Linear(config.n_embd, vocab_size, bias=False)
+                else:
+                    # no factorization
+                    word_embd = nn.Embedding(config.vocab_size, config.n_embd)
+                    self.transformer['wte'] = word_embd
 
-        self.transformer = nn.ModuleDict(dict(
-            wte = word_embd,
-            drop = nn.Dropout(config.dropout),
-            h = nn.ModuleList([Block(config, mlp=shared_mlp_array[i], attn=shared_attn_array[i]) for i in range(config.n_layer)]),
-            ln_f = norm_dictionary[config.norm_variant_output](config),
-        ))
+
+        self.transformer['drop'] = nn.Dropout(config.dropout)
+        self.transformer['h'] = nn.ModuleList([Block(config, mlp=shared_mlp_array[i], attn=shared_attn_array[i]) for i in range(config.n_layer)])
+        self.transformer['ln_f'] = norm_dictionary[config.norm_variant_output](config)
 
         if self.config.use_abs_pos_embeddings:
             if config.quantize_wpe:
@@ -654,12 +234,12 @@ class GPT(nn.Module):
         if config.n_embd_wte:
             self.lm_head = nn.Linear(config.n_embd_wte, config.vocab_size, bias=False)
         else:
-            self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-        # with weight tying when using torch.compile() some warnings get generated:
-        # "UserWarning: functional_call was passed multiple values for tied weights.
-        # This behavior is deprecated and will be an error in future versions"
-        # not 100% sure what this is, so far seems to be harmless. TODO investigate
-        self.transformer.wte.weight = self.lm_head.weight # https://paperswithcode.com/method/weight-tying
+            #TODO: currently multicontext is in own category, add support later for WTE factorization
+            if config.multicontext:
+                for i, vocab_size in enumerate(self.config.vocab_sizes):
+                    self.transformer[f'lm_head_{i}'].weight = self.transformer[f'wte_{i}'].weight
+            else:
+                self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
 
         # Initialize and possibly import scale_up and scale_down matrices, if factorization is set
         if self.n_embd_wte:
@@ -677,6 +257,17 @@ class GPT(nn.Module):
 
         # init all weights
         self.apply(self._init_weights)
+
+        # with weight tying when using torch.compile() some warnings get generated:
+        # "UserWarning: functional_call was passed multiple values for tied weights.
+        # This behavior is deprecated and will be an error in future versions"
+        # not 100% sure what this is, so far seems to be harmless. TODO investigate
+        if self.wte_weight_tying:
+            if config.multicontext:
+                for i, vocab_size in enumerate(self.config.vocab_sizes):
+                    self.transformer[f'lm_head_{i}'].weight = self.transformer[f'wte_{i}'].weight
+            else:
+                self.lm_head.weight = self.transformer.wte.weight # https://paperswithcode.com/method/weight-tying
 
         # import wte
         if self.config.import_wte_npy:
@@ -722,12 +313,42 @@ class GPT(nn.Module):
                     block.attn.bias = torch.tril(torch.ones(new_block_size, new_block_size)).view(1, 1, new_block_size, new_block_size)
 
     def _init_weights(self, module):
+        """
+        Custom weight initialization logic for GPT model.
+        """
         if isinstance(module, nn.Linear):
             torch.nn.init.normal_(module.weight, mean=self.config.linear_mean_init, std=self.config.linear_std_init)
             if module.bias is not None:
                 torch.nn.init.zeros_(module.bias)
         elif isinstance(module, nn.Embedding):
-            torch.nn.init.normal_(module.weight, mean=self.config.embedding_mean_init, std=self.config.embedding_std_init)
+            if self.config.init_variant == "gaussian":
+                torch.nn.init.normal_(
+                    module.weight,
+                    mean=self.config.embedding_mean_init,
+                    std=self.config.embedding_std_init
+                )
+            elif 'wpe' in self.transformer.keys() and module is self.transformer['wpe']:
+                torch.nn.init.normal_(
+                    module.weight,
+                    mean=self.config.embedding_mean_init,
+                    std=self.config.embedding_std_init
+                )
+            else:
+                init_fn = init_dictionary[self.config.init_variant]
+                print(self.config.init_variant)
+
+                # Generate custom init matrix
+                weight_data = init_fn(self.config)
+
+                # Copy into the module's weight
+                with torch.no_grad():
+                    if weight_data.shape != module.weight.shape:
+                        raise ValueError(
+                            f"Init shape {weight_data.shape} does not match embedding shape {module.weight.shape} "
+                            f"for init_variant='{self.config.init_variant}'"
+                        )
+                    module.weight.copy_(weight_data)
+
 
     def update_num_angles(self, num_angles):
         """Update the number of angles for rotary embeddings in all attention layers."""
@@ -791,66 +412,284 @@ class GPT(nn.Module):
         np.savez(file_path, scale_up=scale_up_matrix, scale_down=scale_down_matrix)
         print(f"Scale matrices saved to {file_path}")
 
-    def forward(self, idx, targets=None, iter_num=None):
+    def forward(self, idx, targets=None, iter_num=None, token_dict=None, target_dict=None):
+        if token_dict is not None:
+            token_list = list(token_dict.values())
+            # If target_dict is None (typical for inference), set target_list = None
+            if target_dict is not None:
+                target_list = list(target_dict.values())
+            else:
+                target_list = None
+            device = token_list[0].device
+            b, t = token_list[0].size()
+
+            x = None
+
+            # Add all of the input tokens
+            for i, tokens in enumerate(token_list):
+                if i == 0:
+                    x = self.transformer[f'wte_{i}'](tokens)
+                else:
+                    x += self.transformer[f'wte_{i}'](tokens)
+
+            if self.config.use_embedding_scale:
+                x = x * self.embedding_scale
+
+            if self.config.use_abs_pos_embeddings:
+                pos = torch.arange(0, t, dtype=torch.long, device=device)
+                pos_emb = self.transformer.wpe(pos)  # (t, n_embd)
+                x = self.transformer.drop(x + pos_emb)
+            else:
+                x = self.transformer.drop(x)
+
+            x.requires_grad_(True)
+
+            # sum all learned position residuals
+            learned_sum = None
+
+
+            # TODO: abstact into a method
+            if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == 0:
+                for lpe in self.learned_position_embeddings:
+                    out = lpe(b, t, x, iter_num)
+                    # Accumulate embedding sum
+                    learned_sum = out if learned_sum is None else learned_sum + out
+
+            if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == 0:
+                # Add learned embeddings to x
+                x = x + learned_sum
+
+            # 2. Possibly apply LSV on input
+            if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
+                x = self.lsv_matrix(x)
+
+            layer_idx = 1
+            mlp_res = None
+            for block in self.transformer.h:
+                if self.config.use_gradient_checkpointing:
+                    # TODO: see if this still works with and without mlp res
+                    x = checkpoint.checkpoint(block, x, iter_num, use_reentrant=self.config.recompute_backward_pass)
+                else:
+                    x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
+
+                # TODO: abstact into a method
+                if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == layer:
+                    for lpe in self.learned_position_embeddings:
+                        out = lpe(b, t, x, iter_num)
+                        # Accumulate embedding sum
+                        learned_sum = out if learned_sum is None else learned_sum + out
+
+                if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == layer:
+                    # Add learned embeddings to x
+                    x = x + learned_sum
+                # END lpe section
+
+                # Steering logic
+                if self.use_lsv and layer_idx == self.config.apply_lsv_at_layer_idx:
+                    x = self.lsv_matrix(x)
+                if (self.config.apply_vector_at_layer_idx is not None
+                        and layer_idx == self.config.apply_vector_at_layer_idx):
+                    x = self.apply_vector_to_layer_output(x)
+                if (self.config.obtain_vector_at_layer_idx is not None
+                        and layer_idx == self.config.obtain_vector_at_layer_idx):
+                    x = self.obtain_vector_from_layer_output(x)
+
+                layer_idx += 1
+
+            # 3. Final layer norm
+            x = self.transformer.ln_f(x)
+
+            # 4. Optionally scale down
+            if self.n_embd_wte:
+                x = F.linear(x, self.transformer.scale_down.weight.t())
+
+            # 5. Compute separate logits
+            logits = []
+            for i in range(len(token_list)):
+                logits.append(self.transformer[f'lm_head_{i}'](x))
+
+            if self.config.final_logit_softcapping is not None:
+                logits = logits / self.config.final_logit_softcapping
+                logits = torch.tanh(logits)
+                logits = logits * self.config.final_logit_softcapping
+
+            # 6. Compute losses if targets are provided
+            # If we only want the last token, adapt the slices as you prefer
+            losses = None
+            if target_list is not None:
+                # If we do want to compute losses for each context
+                losses = []
+                for i in range(len(token_list)):
+                    loss_i = F.cross_entropy(
+                        logits[i].view(-1, logits[i].size(-1)),
+                        target_list[i].view(-1),
+                        ignore_index=-1
+                    )
+                    losses.append(loss_i)
+
+            else:
+                # only forward lm head on very last position in inference mode
+                for i in range(len(token_list)):
+                    logits.append(self.transformer[f'lm_head_{i}'](x[:, [-1], :]))
+                losses = None
+
+            return logits, losses
+
+        else:
+            device = idx.device
+            b, t = idx.size()
+            # assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
+
+            # forward the GPT model itself
+            tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
+            x = None
+
+            if self.config.use_embedding_scale:
+                tok_emb = tok_emb * self.embedding_scale
+
+            if self.n_embd_wte:
+                tok_emb = self.transformer.scale_up(tok_emb)
+
+            if self.config.use_abs_pos_embeddings:
+                pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
+                pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
+                x = self.transformer.drop(tok_emb + pos_emb)
+            else:
+                x = self.transformer.drop(tok_emb)
+
+            # sum all learned position residuals
+            learned_sum = None
+
+
+            # TODO: abstact into a method
+            if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == 0:
+                for lpe in self.learned_position_embeddings:
+                    out = lpe(b, t, x, iter_num)
+                    # Accumulate embedding sum
+                    learned_sum = out if learned_sum is None else learned_sum + out
+
+            if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == 0:
+                # Add learned embeddings to x
+                x = x + learned_sum
+
+            x.requires_grad_(True)  # Ensure requires_grad is True
+
+            if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
+                x = self.lsv_matrix(x)
+
+            layer = 1
+            mlp_res = None
+            for block in self.transformer.h:
+                # Propagate tokens through layers
+                if self.config.use_gradient_checkpointing:
+                    x = checkpoint.checkpoint(block, x, iter_num, use_reentrant=self.config.recompute_backward_pass)
+                else:
+                    x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
+
+                # Intercept for Learned Steering Vectors
+                if self.use_lsv and layer == self.config.apply_lsv_at_layer_idx:
+                    x = self.lsv_matrix(x)
+                    # x = self.apply_learned_vector_to_layer_output(x)
+
+                # TODO: abstact into a method
+                if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == layer:
+                    for lpe in self.learned_position_embeddings:
+                        out = lpe(b, t, x, iter_num)
+                        # Accumulate embedding sum
+                        learned_sum = out if learned_sum is None else learned_sum + out
+
+                if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == layer:
+                    # Add learned embeddings to x
+                    x = x + learned_sum
+                # END lpe section
+
+                # Intercept for Steering Vectors
+                if self.config.apply_vector_at_layer_idx is not None and layer == self.config.apply_vector_at_layer_idx:
+                    x = self.apply_vector_to_layer_output(x)
+                if self.config.obtain_vector_at_layer_idx is not None and layer == self.config.obtain_vector_at_layer_idx:
+                    print(layer, self.config.obtain_vector_at_layer_idx)
+                    x = self.obtain_vector_from_layer_output(x)
+
+                layer +=1
+
+            x = self.transformer.ln_f(x)
+
+            if self.n_embd_wte:
+                x = F.linear(x, self.transformer.scale_down.weight.t())
+
+            if self.config.final_logit_softcapping is not None:
+                logits = logits / self.config.final_logit_softcapping
+                logits = torch.tanh(logits)
+                logits = logits * self.config.final_logit_softcapping
+
+            if targets is not None:
+                # if we are given some desired targets also calculate the loss
+                logits = self.lm_head(x)
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+            else:
+                # inference-time mini-optimization: only forward the lm_head on the very last position
+                logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+                loss = None
+
+            return logits, loss
+    # ------------------------------------------------------------------
+    #  LATENT-CHAINING
+    # ------------------------------------------------------------------
+    @torch.no_grad()
+    def embed_tokens(self, idx):
+        """
+        Return the (B,T,E) tensor right *after* token embeddings,
+        factor-scale-up, positional embedding and dropout.  Exactly the
+        same tensor that flows into the first transformer Block inside
+        `forward()`.  Used by train_recurrent.py for the FIRST step.
+        """
         device = idx.device
-        b, t = idx.size()
-        # assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
-
-        # forward the GPT model itself
-        tok_emb = self.transformer.wte(idx) # token embeddings of shape (b, t, n_embd)
-        x = None
-
+        tok_emb = self.transformer.wte(idx)
         if self.n_embd_wte:
             tok_emb = self.transformer.scale_up(tok_emb)
+        if self.config.use_embedding_scale:
+            tok_emb = tok_emb * self.embedding_scale
         if self.config.use_abs_pos_embeddings:
-            pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
-            pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-            x = self.transformer.drop(tok_emb + pos_emb)
-        else:
-            x = self.transformer.drop(tok_emb)
+            t = idx.size(1)
+            pos = torch.arange(0, t, dtype=torch.long, device=device)
+            tok_emb = tok_emb + self.transformer.wpe(pos)
+        return self.transformer.drop(tok_emb)
 
-        x.requires_grad_(True)  # Ensure requires_grad is True
+    def forward_embedded(self, x_emb, iter_num=None, return_hidden=False):
+        """
+        Complete forward pass **starting from an already-embedded tensor**
+        `x_emb` of shape (B,T,E).  Returns (`logits`, `loss`) identical to
+        `forward`, and – if `return_hidden` – also the final hidden state
+        right before `lm_head`.  No gradients are blocked; loss still
+        back-propagates into `x_emb`.
+        """
+        # ---- copy–paste from the “else:” branch of forward() ---------
+        b, t, _ = x_emb.size()
+        x = x_emb
 
+        # (learned position residuals, steering vectors, etc.)
+        learned_sum = None
         if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
             x = self.lsv_matrix(x)
 
-        layer = 1
+        mlp_res = None
+        layer_idx = 1
         for block in self.transformer.h:
-            # Propagate tokens through layers
-            if self.config.use_gradient_checkpointing:
-                x = checkpoint.checkpoint(block, x, iter_num, use_reentrant=self.config.recompute_backward_pass)
-            else:
-                x = block(x, iter_num)
-
-            # Intercept for Learned Steering Vectors
-            if self.use_lsv and layer == self.config.apply_lsv_at_layer_idx:
+            x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
+            if self.use_lsv and layer_idx == self.config.apply_lsv_at_layer_idx:
                 x = self.lsv_matrix(x)
-                # x = self.apply_learned_vector_to_layer_output(x)
-
-            # Intercept for Steering Vectors
-            if self.config.apply_vector_at_layer_idx is not None and layer == self.config.apply_vector_at_layer_idx:
-                x = self.apply_vector_to_layer_output(x)
-            if self.config.obtain_vector_at_layer_idx is not None and layer == self.config.obtain_vector_at_layer_idx:
-                print(layer, self.config.obtain_vector_at_layer_idx)
-                x = self.obtain_vector_from_layer_output(x)
-
-            layer +=1
+            layer_idx += 1
 
         x = self.transformer.ln_f(x)
-
         if self.n_embd_wte:
             x = F.linear(x, self.transformer.scale_down.weight.t())
 
-        if targets is not None:
-            # if we are given some desired targets also calculate the loss
-            logits = self.lm_head(x)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-        else:
-            # inference-time mini-optimization: only forward the lm_head on the very last position
-            logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
-            loss = None
+        logits = self.lm_head(x)
+        if self.final_logit_softcapping is not None:
+            logits = torch.tanh(logits / self.final_logit_softcapping) \
+                     * self.final_logit_softcapping
 
-        return logits, loss
+        return (logits, x) if return_hidden else (logits, None)
 
     def set_lsv_scaling_factor(self, factor):
         self.lsv_matrix.update_lsv_scaling_factor(factor)
@@ -1004,10 +843,13 @@ class GPT(nn.Module):
         return idx
 
     @torch.no_grad()
-    def generate_with_stop(self, idx, max_new_tokens, stop_string, decode, temperature=1.0, top_k=None):
+    def generate_with_stop(self, idx, max_new_tokens, stop_strings, decode, temperature=1.0, top_k=None):
         """
-        Generate tokens and stop on fixed string match, return the state for further input.
+        Generate tokens and stop on any fixed string match from a list of stop strings.
         """
+        if isinstance(stop_strings, str):
+            stop_strings = [stop_strings]  # make it a list if a single string
+
         generated_text = ""
         buffer = ""
         for _ in range(max_new_tokens):
@@ -1025,57 +867,9 @@ class GPT(nn.Module):
             generated_text += next_token_text
             buffer += next_token_text
 
-            # Check if the buffer ends with the stop_string
-            if buffer.endswith(stop_string):
-                break
+            # Check if buffer ends with any stop string
+            for stop_string in stop_strings:
+                if buffer.endswith(stop_string):
+                    return idx, generated_text
 
         return idx, generated_text
-
-
-class MoELayer(nn.Module):
-    """ Mixture of Experts layer to replace FFN (or every other FFN) """
-
-    def __init__(self, config):
-        super().__init__()
-        self.top_k = config.moe_top_k
-        # TODO: implement expert capacity throttling
-        # self.expert_capacity = config.expert_capacity
-        self.num_experts = config.n_experts
-        self.router = router_dictionary[config.moe_router_scheme](config)
-        self.experts = nn.ModuleList([MLP(config) for _ in range(config.n_experts)])
-
-    def forward(self, x):
-        # Assuming x has shape [batch_size, seq_len, n_embd]
-        batch_size, seq_len, _ = x.shape
-        gating_output, indices = self.router(x)
-        # print(f"gating_output.shape: {gating_output.shape}")
-        # print(f"indices 1 count: {indices}")
-        final_output = torch.zeros_like(x)
-
-        # Flatten the batch and sequence dimensions to treat each token independently
-        flat_x = x.view(-1, x.size(-1))
-        # print(f"x.shape() = {x.shape}")
-        # print(f"flat_x = {flat_x.shape}")
-        flat_gating_output = gating_output.view(-1, gating_output.size(-1))
-        # print(f"flat_gating_output.shape = {flat_gating_output.shape}")
-
-        # Process each expert in parallel
-        for i, expert in enumerate(self.experts):
-            # Create a mask for the inputs where the current expert is in top-k
-            expert_mask = (indices == i).any(dim=-1)
-            flat_mask = expert_mask.view(-1)
-            # print(f"expert_mask shape = {expert_mask.shape}")
-            # print(f"flat_mask shape = {flat_mask.shape}")
-
-            if flat_mask.any():
-                expert_input = flat_x[flat_mask]
-                expert_output = expert(expert_input)
-
-                # Extract and apply gating scores
-                gating_scores = flat_gating_output[flat_mask, i].unsqueeze(1)
-                weighted_output = expert_output * gating_scores
-
-                # Update final output additively by indexing and adding
-                final_output[expert_mask] += weighted_output.squeeze(1)
-        # print(f"final_output.shape = {final_output.shape}\n")
-        return final_output

@@ -1,7 +1,9 @@
+# prepare.py
 import json
 import pickle
 import argparse
 import numpy as np
+import os
 from tokenizer_options import (
     NumericRangeTokenizer,
     SentencePieceTokenizer,
@@ -10,15 +12,14 @@ from tokenizer_options import (
     CharTokenizer,
     CustomCharTokenizerWithByteFallback,
     Qwen2Tokenizer
+    JsonByteTokenizerWithByteFallback,
 )
 from tqdm import tqdm
-import os
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Tokenize text data using different methods.")
     parser.add_argument("--tokens_file", type=str, default=None, help="Path to the file containing newline-separated tokens for tokenization")
-    parser.add_argument("--method", type=str, choices=["sentencepiece", "tiktoken", "char", "custom", "custom_char_byte_fallback", "numeric_range", "qwen2"], default="tiktoken", help="Tokenization method")
+    parser.add_argument("--method", type=str, choices=["sentencepiece", "tiktoken", "char", "custom", "custom_char_byte_fallback", "numeric_range", "json_byte_fallback", "qwen2"], default="tiktoken", help="Tokenization method")
     # SentencePiece only arguments
     parser.add_argument("--vocab_size", type=int, default=500, help="Vocabulary size for SentencePiece model")
     parser.add_argument("--spm_model_file", type=str, default=None, help="Path to the pre-trained SentencePiece model file")
@@ -49,6 +50,9 @@ def parse_arguments():
         default="qwen2_1p5b",
         help="Model for qwen2 tokenization",
     )
+    # tokenizer counts
+    parser.add_argument("--json_tokens_file", type=str, default=None, help="Path to the JSON file containing an array of tokens for json_byte_fallback mode")
+    parser.add_argument("-T", "--track_token_counts", action="store_true", help="Track how often each token appears and store in meta.pkl")
     return parser.parse_args()
 
 
@@ -94,16 +98,14 @@ def main():
         tokenizer = TiktokenTokenizer(args)
     elif args.method == "custom":
         tokenizer = CustomTokenizer(args)
-    elif args.method == "replace":
-        tokenizer = ReplaceTokenizer(args)
-    elif args.method == "lines":
-        tokenizer = LinesTokenizer(args)
     elif args.method == "char":
         tokenizer = CharTokenizer(args, train_data, val_data)
     elif args.method == "custom_char_byte_fallback":
         tokenizer = CustomCharTokenizerWithByteFallback(args)
     elif args.method == "qwen2":
         tokenizer = Qwen2Tokenizer(args)
+    elif args.method == "json_byte_fallback":
+        tokenizer = JsonByteTokenizerWithByteFallback(args)
     else:
         raise ValueError(f"Unknown tokenization method: {args.method}")
 

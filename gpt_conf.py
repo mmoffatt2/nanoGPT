@@ -1,3 +1,4 @@
+# gpt_conf.py
 from dataclasses import dataclass, field, asdict, fields
 from typing import List
 import json
@@ -5,12 +6,88 @@ import math
 
 @dataclass
 class GPTConfig:
+    attention_list: List[str] = field(default_factory=lambda: [])
     block_size: int = 1024
     vocab_size: int = 50304 # GPT-2 vocab_size of 50257, padded up to nearest multiple of 64 for efficiency
     n_layer: int = 12
     n_head: int = 12
     n_kv_group: int = 12
     n_embd: int = 768
+    mlp_down_projs: int = 1  # Number of down projections in MLP/SwiGLU
+
+    # Layerlists
+    n_head_layerlist: List[int] = field(default_factory=list)
+    n_qk_head_dim_layerlist: List[int] = field(default_factory=list)
+    n_v_head_dim_layerlist: List[int] = field(default_factory=list)
+    mlp_size_layerlist: List[int] = field(default_factory=list)
+
+    # For multicontext training
+    multicontext: bool = False
+    vocab_sizes: List[int] = field(default_factory=lambda: []) # Used in place of vocab
+
+    # MLP bias configuration
+    mlp_up_bias: bool | None = None  # If None, uses global bias setting
+    mlp_down_bias: bool | None = None  # If None, uses global bias setting
+
+    # FFN offset parameters
+    mlp_x_offset: float = 0.0
+    mlp_y_offset: float = 0.0
+    learn_mlp_x_offset: bool = False
+    learn_mlp_y_offset: bool = False
+
+    ## MLA Variations
+    mla_latent_dim: int | None = None   # d_c  (proj dimension of the shared latent)
+    mla_rotary_dim: int       = 32      # d_r  (# rotary channels per head)
+
+    use_mla_lobo: bool = False          # turns the feature on/off
+    mla_lobo_init: float = 0.0          # log-space initial value (like flash_lobo_log_const)
+
+    ## CO4 attention variation
+    n_latent: int = None
+    triadic_loops: int = None
+    mod_fn: str = "causal"
+
+    ## Inf attention variation
+    n_qk_head_dim: int = None
+    n_v_head_dim: int = None
+    n_cproj: int = None
+    use_concat_heads: bool = False
+
+    # Softcapping params
+    attn_logit_softcapping: float | None = None
+    final_logit_softcapping: float | None = None
+
+    # Learned Position Embeddings
+    n_lpe: int = 0
+    lpe_block_size: int = 1024
+    lpe_n_layer: int = 12
+    lpe_n_head: int = 12
+    lpe_n_kv_group: int = 12
+    lpe_n_qk_head_dim: int = None
+    lpe_n_v_head_dim: int = None
+    lpe_use_abs_pos_embeddings: bool = True
+    lpe_use_rotary_embeddings: bool = True
+    lpe_attention_variant: str = "causal"
+    lpe_mlp_variant: str = "mlp"
+    lpe_mlp_size: str = None
+    target_layer_in_lpe: int = 0
+    target_layer_out_lpe: int = 0
+
+    # Shared parameters
+    # MLP
+    lpe_shared_mlp_size: int = 1
+    lpe_shared_mlp_sym: bool = False
+    # ATTN
+    lpe_shared_attn_size: int = 1
+    lpe_shared_attn_sym: bool = False
+
+    # Attention Variation Specific
+
+    ## Flash Lobo
+    use_flash_lobo: bool = False
+    use_flash_lobo_per_head: bool = False
+    use_flash_obo_const: bool = False
+    flash_lobo_log_const: float = 0.0
 
     # Steering Vectors
     ## Where to intercept
@@ -32,6 +109,7 @@ class GPTConfig:
 
     # weight tying
     n_embd_wte_scale_tying: bool = True
+    wte_weight_tying: bool = True # Non-factorized wte weight tying
 
     # wte import/export
     import_wte_freeze: bool = False
@@ -70,10 +148,26 @@ class GPTConfig:
     ## Flash attention
     disable_flash_attention: bool = False
 
+    # Attention Options
+    attention_variant: str = "causal"
+
+    # QK Norm Options
+    use_qk_norm: bool = False
+    use_qk_norm_scale: bool = False
+
+    ## SSM - Attention Varient (same as Hymba)
+    ssm_mamba_expand: int = 2
+    ssm_conv_kernel_size: int = 3
+    ssm_dt_rank: int = 8
+    ssm_d_state: int = 16
+    ssm_io_bias: bool = True
+
     # MLP Options
     use_parallel_mlp: bool = False
     mlp_variant: str = "mlp"
     mlp_expansion_factor: float = 4.0
+    mlp_size: int = None
+    mlp_res: bool = False
 
     ## KAN Option
     kan_poly_order: int = 3
@@ -84,9 +178,11 @@ class GPTConfig:
     # MLP
     shared_mlp_size: int = 1
     shared_mlp_sym: bool = False
+    shared_mlp_seq: int = 1
     # ATTN
     shared_attn_size: int = 1
     shared_attn_sym: bool = False
+    shared_attn_seq: int = 1
 
     # Softmax Alternatives and Options
     softmax_variant_attn: str = "softmax" # Choices: "softmax" "softermax" "sigsoftmax" "polymax" "strongermax" "consmax"
@@ -140,6 +236,7 @@ class GPTConfig:
 
     strongermax_obo: float = 0.0
     strongermax_use_learned_obo: bool = False
+    strongermax_use_learned_obo_per_head: bool = False
 
     strongermax_temperature_factor: float = 1.0
     strongermax_use_learned_temperature_factor: bool = False
@@ -201,6 +298,16 @@ class GPTConfig:
     krmsnorm_enable_gain: bool = True
     krmsnorm_selection_type: str = 'last'
     krmsnorm_recompute_percentage: float = 0.05
+    hsnorm_gain: bool = False
+    hsnorm_radius: float = 1.0
+    hsnorm_radius_learning: bool = False
+
+    dact_alpha_init: float = 1.0
+    dact_activation: str = 'tanh'
+    dact_use_gamma: bool = True
+    dact_use_beta: bool = True
+    dact_use_alpha: bool = True
+    use_embedding_scale: bool = False
 
     # Activation Alternatives
 
@@ -220,11 +327,6 @@ class GPTConfig:
     pfla_left_bound: float = -100.0
     pfla_right_bound: float = 100.0
 
-    ## PiecewiseFullyLearnableActivationLearnedEnds - pflale
-    pfla_le_num_points: int = 30
-    pfla_le_left_bound: float = -10.0
-    pfla_le_right_bound: float = 10.0
-
     ## LearnedSplineActivation - lsa
     lsa_num_knots: int = 30
 
@@ -242,6 +344,11 @@ class GPTConfig:
     ## Linear Initialization Options
     linear_mean_init: float= 0.0
     linear_std_init: float= 0.02
+
+    ## Embedding initialization options
+    init_variant: str = "gaussian"
+    init_scale: float = 0.01
+    init_wte_npy: str = "wte.npy"
 
     # Quantizations
     start_quant_level: float = 0

@@ -1,3 +1,4 @@
+# variations/activation_variations.py
 import torch
 import torch.nn as nn
 
@@ -71,7 +72,7 @@ class PiecewiseLearnableActivation(nn.Module):
 class PiecewiseFullyLearnableActivation(nn.Module):
     def __init__(self, config):
         super().__init__()
-        self.num_of_points = config.pfla_num_of_points
+        self.num_of_points = config.pfla_num_points
         self.left_bound = config.pfla_left_bound
         self.right_bound = config.pfla_right_bound
 
@@ -111,9 +112,9 @@ class PiecewiseFullyLearnableActivation(nn.Module):
 class PiecewiseFullyLearnableActivationLearnedEnds(nn.Module):
     def __init__(self, config, left_bound=-10, right_bound=10, num_of_points=30):
         super().__init__()
-        self.num_of_points = config.num_of_points
-        self.left_bound = config.left_bound
-        self.right_bound = config.right_bound
+        self.num_of_points = config.pfla_num_points
+        self.left_bound = config.pfla_left_bound
+        self.right_bound = config.pfla_right_bound
 
         # Initialize learnable parameters for x and y values of intermediate points
         self.x_vals = nn.Parameter(
@@ -304,6 +305,11 @@ class Tanh_Config(ActivationWrapper):
     def __init__(self, config=None):
         super().__init__(nn.Tanh, config)
 
+class Identity_Config(ActivationWrapper):
+    def __init__(self, config=None):
+        super().__init__(nn.Identity, config)
+
+
 activation_dictionary = {
     "celu": CELU_Config,
     "elu": ELU_Config,
@@ -327,5 +333,6 @@ activation_dictionary = {
     "softsign": Softsign_Config,
     "squared_relu": SquaredReLU,
     "tanh": Tanh_Config,
+    "identity": Identity_Config,
 }
 

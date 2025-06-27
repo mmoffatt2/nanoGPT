@@ -87,7 +87,7 @@ If unsure, visit the pytorch page and subtitute the appropriate line for the `to
 This downloads and parses a literature dataset into `train.bin` and `val.bin` files.
 
 ```bash
-python3 data/shakespeare_char/prepare.py
+bash data/shakespeare_char/get_dataset.sh
 ```
 ### Train Model From Scratch
 
@@ -149,7 +149,7 @@ checkpoints created from training using `validation loss` as a figure of merit.
 To run the experiment create or modify an existing json file in the `explorations` folder:
 
 ```bash
-python3 run_experiments.py -c explorations/config.json
+python3 optimization_and_search/run_experiments.py -c explorations/config.json
 ```
 
 This will create logs in the following directories:
@@ -174,16 +174,16 @@ parent directory.
 
 Example usage:
 ```bash
-python3 inspect_ckpts.py --directory ./out --sort loss
+python3 checkpoint_analysis/inspect_ckpts.py --directory ./out --sort loss
 ```
 
-![image](./images/inspect_ckpts.png)
+![image](./documentation/images/inspect_ckpts.png)
 
 This can be wrapped with color via the watch command for a realtime dashboard.
 
 For example to look at all checkpoint files in the out directory:
 ```bash
-watch --color 'python3 inspect_ckpts.py --directory ./out --sort loss'
+watch --color 'python3 checkpoint_analysis/inspect_ckpts.py --directory ./out --sort loss'
 ```
 
 As with remainder of the repo, this script is provided as a base to open up for
@@ -194,14 +194,17 @@ additional community contributions.
 If using tensorboard for logging, we have provided a convenience script:
 
 ```bash
-bash start_tensorboard.sh
+source ./logging/start_tensorboard.sh
 ```
 
 You can view live validation loss updates on url: [http://localhost:6006](http://localhost:6006)
 
-Note: Only one tensorboard process can grab port 6006 at time, try closing other
-processes (e.g. other tensorboards) using this port, or choose an alternative
-port if new tensorboard isn't showing.
+Note: Only one tensorboard process can grab port 6006 at time, if you want to
+run a second tensorboard, use the script and specify a different port e.g. 6007:
+
+```bash
+source ./logging/start_tensorboard.sh 6007
+```
 
 ## TODO Section:
 
