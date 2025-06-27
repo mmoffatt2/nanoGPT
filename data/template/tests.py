@@ -12,7 +12,7 @@ from tokenizers import (
     CustomTokenizer,
     CharTokenizer,
     CustomCharTokenizerWithByteFallback,
-    Qwen2Tokenizer
+    Qwen2Tokenizer,
     JsonByteTokenizerWithByteFallback,
 )
 from argparse import Namespace
