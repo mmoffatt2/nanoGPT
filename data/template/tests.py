@@ -5,7 +5,7 @@ import os
 import sys
 import pickle
 import json
-from tokenizers import (
+from tokenizer_options import (
     NumericRangeTokenizer,
     SentencePieceTokenizer,
     TiktokenTokenizer,
