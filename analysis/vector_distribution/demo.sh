@@ -1,58 +1,110 @@
 #!/bin/bash
+
 echo "Exhaustive: Integers"
-for (( n = 32; n <= 128; n+=32 )); do
+for (( n = 32; n <= 352; n+=32 )); do
   for (( i = 3; i <= 8; i++ )); do
-    python3 ./vector_distribution_analysis.py  \
-      --format "int$i" \
-      --mode exhaustive  \
-      --healpix  \
-      --nside "$n"  \
-      --out3d "images/healpix_int${i}_nside${n}_exhaustive.html"
+    out3d="images/healpix_int${i}_nside${n}_exhaustive.html"
+    if [ ! -f "$out3d" ]; then
+      python3 ./vector_distribution_analysis.py  \
+        --format "int$i" \
+        --mode exhaustive  \
+        --healpix  \
+        --nside "$n"  \
+        --out3d "$out3d"
+    else
+      echo "already created $out3d"
+    fi
   done
 done
 
 echo "Exhaustive: e_m_"
 
-for (( n = 32; n <= 128; n+=32 )); do
-  for (( e = 1; e <= 4; e++ )); do
-    for (( m = 2; m <= 3; m++ )); do
+for (( n = 32; n <= 352; n+=32 )); do
+  for (( e = 1; e <= 5; e++ )); do
+    for (( m = 2; m <= 10; m++ )); do
+    out3d="images/healpix_e${e}m${m}_nside${n}_exhaustive.html"
+    if [ ! -f "$out3d" ]; then
       python3 ./vector_distribution_analysis.py  \
         --format fp16 -e "$e" -m "$m" \
         --mode exhaustive  \
         --healpix  \
         --nside "$n"  \
-        --out3d "images/healpix_e${e}m${m}_nside${n}_exhaustive.html"
+        --out3d "$out3d"
+    else
+      echo "already created $out3d"
+    fi
+
     done
   done
 done
 
-for (( n = 32; n <= 128; n+=32 )); do
+echo "integer with gaussian and stnadard deviations"
+for (( n = 64; n <= 320; n+=64 )); do
   for (( i = 3; i <= 8; i++ )); do
-    for (( std = 10; std <= 30; std++ )); do
-      echo "Gaussian: int${i}"
-      python3 ./vector_distribution_analysis.py  \
-        --format "int${i}" \
-        --mode gaussian  \
-        --num 1000000  \
-        --std 10 \
-        --healpix  \
-        --nside "$n"  \
-        --out3d "images/healpix_int${i}_gaussian_std${std}_1000000_healpix_${n}.html"
+    for (( std = 1; std <= 11; std+=2 )); do
+      out3d="images/healpix_int${i}_gaussian_std${std}_1000000_healpix_${n}.html"
+      if [ ! -f "$out3d" ]; then
+        echo "Gaussian: int${i}"
+        python3 ./vector_distribution_analysis.py  \
+          --format "int${i}" \
+          --mode gaussian  \
+          --num 1000000  \
+          --std "$std" \
+          --healpix  \
+          --nside "$n"  \
+          --out3d "$out3d"
+      else
+        echo "already created $out3d"
+      fi
     done
   done
 done
 
-for (( n = 32; n <= 128; n+=32 )); do
-  for (( e = 0; e <= 4; e++ )); do
-    for (( m = 2; m <= 3; m++ )); do
-      echo "Gaussian: e${e}m${m}"
-      python3 ./vector_distribution_analysis.py  \
-        --format fp16 -e "$e" -m "$m"  \
-        --mode gaussian  \
-        --num 1000000  \
-        --healpix  \
-        --nside 300  \
-        --out3d "images/healpix_e${e}m${m}_gaussian_1000000_healpix_${n}.html"
+echo "e_m_ with decimal standard deviation"
+for (( n = 64; n <= 320; n+=64 )); do
+  for (( e = 1; e <= 5; e++ )); do
+    for (( m = 2; m <= 10; m++ )); do
+      for (( std = 1; std <= 9; std+=2 )); do
+        out3d="images/healpix_e${e}m${m}_gaussian_1000000_healpix_${n}_std0.${std}.html"
+        if [ ! -f "$out3d" ]; then
+          echo "Gaussian: e${e}m${m}"
+          python3 ./vector_distribution_analysis.py  \
+            --format fp16 -e "$e" -m "$m"  \
+            --mode gaussian  \
+            --num 1000000  \
+            --healpix  \
+            --std "0.$std" \
+            --nside "$n"  \
+            --out3d "$out3d"
+        else
+          echo "already created $out3d"
+        fi
+      done
     done
   done
 done
+
+echo "e_m_ with integer standard deviation"
+for (( n = 64; n <= 320; n+=64 )); do
+  for (( e = 1; e <= 5; e++ )); do
+    for (( m = 2; m <= 10; m++ )); do
+      for (( std = 1; std <= 9; std+=2 )); do
+        out3d="images/healpix_e${e}m${m}_gaussian_1000000_healpix_${n}_std${std}.html"
+        if [ ! -f "$out3d" ]; then
+          echo "Gaussian: e${e}m${m}"
+          python3 ./vector_distribution_analysis.py  \
+            --format fp16 -e "$e" -m "$m"  \
+            --mode gaussian  \
+            --num 1000000  \
+            --healpix  \
+            --std "$std" \
+            --nside "$n"  \
+            --out3d "$out3d"
+        else
+          echo "already created $out3d"
+        fi
+      done
+    done
+  done
+done
+
