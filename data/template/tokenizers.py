@@ -119,16 +119,16 @@ class TiktokenTokenizer(Tokenizer):
     def __init__(self, args):
         super().__init__(args)
         self.tiktoken_encoding = args.tiktoken_encoding
-        
+
         # Load additional tokens if provided
         self.additional_tokens = {}
         if hasattr(args, 'additional_tokens_file') and args.additional_tokens_file:
             with open(args.additional_tokens_file, 'r') as f:
                 self.additional_tokens = json.load(f)
-        
+
         # Get base encoding
         base_enc = tiktoken.get_encoding(self.tiktoken_encoding)
-        
+
         if self.additional_tokens:
             # Create custom encoding with additional tokens
             self.enc = tiktoken.Encoding(
@@ -147,7 +147,7 @@ class TiktokenTokenizer(Tokenizer):
         token_ids = []
         current_pos = 0
         data_len = len(data)
-        
+
         while current_pos < data_len:
             # Try to match special tokens first
             matched_special = False
@@ -158,7 +158,7 @@ class TiktokenTokenizer(Tokenizer):
                     current_pos += len(token)
                     matched_special = True
                     break
-            
+
             if not matched_special:
                 # Find the next special token or end of text
                 next_special = data_len
@@ -166,7 +166,7 @@ class TiktokenTokenizer(Tokenizer):
                     pos = data.find(token, current_pos)
                     if pos != -1 and pos < next_special:
                         next_special = pos
-                
+
                 # Take the chunk up to the next special token and let tiktoken handle it
                 chunk = data[current_pos:next_special]
                 if chunk:
@@ -200,11 +200,11 @@ class TiktokenTokenizer(Tokenizer):
                     result.append(token)
                     found = True
                     break
-            
+
             if not found:
                 # Regular token
                 result.append(self.enc.decode([token_id]))
-        
+
         return ''.join(result)
 
 
