@@ -749,6 +749,7 @@ def parse_args():
         "softplus",
         "squareplus",
         "exppolymax",
+        "pfla_softmax",
         ]
 
     ## Selection of softmax variation for attention and output layers
@@ -831,6 +832,51 @@ def parse_args():
 
     ### Sequence Length Division https://arxiv.org/abs/2309.
     model_group.add_argument('--div_by_seq_len', default=False, action=argparse.BooleanOptionalAction)
+
+    # ─────────── PFLA‑Softmax options ─────────────────────────────────────
+    model_group.add_argument("--pfla_softmax_num_points",   type=int,  default=30)
+    model_group.add_argument("--pfla_softmax_left_bound",   type=float, default=-10.0)
+    model_group.add_argument("--pfla_softmax_right_bound",  type=float, default=10.0)
+    model_group.add_argument("--pfla_softmax_learn_x",      action=argparse.BooleanOptionalAction, default=False)
+    model_group.add_argument("--pfla_softmax_learn_y",      action=argparse.BooleanOptionalAction, default=True)
+    model_group.add_argument("--pfla_softmax_init_activation",
+                             type=str,
+                             default="gelu",
+                             choices=activation_variations,
+                             help="Reference activation used to initialise √y knots.")
+    model_group.add_argument("--pfla_softmax_density",
+                             type=str,
+                             default="linear",
+                             choices=["linear", "quad", "exp"],
+                             help="Distribution of x‑knots over the interval.")
+
+    # normalisation knobs
+    model_group.add_argument("--pfla_softmax_use_learned_divisor",
+                             action=argparse.BooleanOptionalAction,
+                             default=False,
+                             help="Replace Σy with a learned positive scalar γ.")
+    model_group.add_argument("--pfla_softmax_gamma_init",   type=float, default=1.0)
+
+    model_group.add_argument("--pfla_softmax_use_obo",
+                             action=argparse.BooleanOptionalAction,
+                             default=False,
+                             help="Adds an off‑by‑one (+obo) addend. Do this first before adding the 'learned_obo' feature.")
+    
+    model_group.add_argument("--pfla_softmax_use_learned_obo",
+                             action=argparse.BooleanOptionalAction,
+                             default=False,
+                             help="First must activate pfla_softmax_use_obo. This makes it a learned off‑by‑one (+obo) addend.")
+    model_group.add_argument("--pfla_softmax_obo",          type=float, default=0.0)
+
+    # interpolation variant
+    model_group.add_argument("--pfla_softmax_mode",
+                             type=str,
+                             default="linear",
+                             choices=["linear", "quadratic"],
+                             help="Interpolation scheme: "
+                                  "'linear' or 'quadratic'.")
+    # ───────────────────────────────────────────────────────────────────────
+
 
     # Gradient Checkpointing
     model_group.add_argument('--use_gradient_checkpointing', default=False, action=argparse.BooleanOptionalAction, help="Memory efficient training, but takes longer time to train due to trading compute time for memory efficiency. For best memory tradeoff omit the --compile flag. For medium memory tradeoff add --compile.")
