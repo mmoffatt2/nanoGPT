@@ -188,6 +188,7 @@ class GPTConfig:
     softmax_variant_attn: str = "softmax" # Choices: "softmax" "softermax" "sigsoftmax" "polymax" "strongermax" "consmax"
     softmax_variant_output: str = "softmax" # Choices: "softmax" "softermax" "sigsoftmax" "polymax" "strongermax" "consmax"
 
+
     ## General Options
     div_by_seq_len: bool = False # for supported functions will divide by seq length
 
@@ -262,6 +263,27 @@ class GPTConfig:
 
     ## Squareplus options
     squareplus_divisor: float = 256.0
+
+    # ──────────────────────────────────────────────────────────────────────
+    ## PFLA‑Softmax configuration
+    pfla_softmax_num_points: int  = 30      # # inner control points
+    pfla_softmax_left_bound: float  = -10.0 # x‑range start
+    pfla_softmax_right_bound: float = 10.0  # x‑range end
+    pfla_softmax_learn_x: bool  = False     # learn knot x‑positions?
+    pfla_softmax_learn_y: bool  = True      # learn √y values?
+    pfla_softmax_init_activation: str = "gelu"   # reference curve for init
+    pfla_softmax_density: str = "linear"    # linear | quad | exp
+
+    ### normalisation extras
+    pfla_softmax_use_learned_divisor: bool = False
+    pfla_softmax_gamma_init: float  = 1.0   # γ initial value iff learned
+
+    pfla_softmax_use_learned_obo: bool = False
+    pfla_softmax_obo: float = 0.0           # fixed or initial OBO (+1) addend
+
+    ### interpolation mode
+    pfla_softmax_mode: str = "linear"       # "linear" | "quadratic"
+    # ──────────────────────────────────────────────────────────────────────
 
     # Positional Embeddings Variations
     use_abs_pos_embeddings: bool = True # Note: one can use this AND rotary embeddings
