@@ -857,10 +857,15 @@ def parse_args():
                              help="Replace Σy with a learned positive scalar γ.")
     model_group.add_argument("--pfla_softmax_gamma_init",   type=float, default=1.0)
 
+    model_group.add_argument("--pfla_softmax_use_obo",
+                             action=argparse.BooleanOptionalAction,
+                             default=False,
+                             help="Adds an off‑by‑one (+obo) addend. Do this first before adding the 'learned_obo' feature.")
+    
     model_group.add_argument("--pfla_softmax_use_learned_obo",
                              action=argparse.BooleanOptionalAction,
                              default=False,
-                             help="Learn the off‑by‑one (+obo) addend.")
+                             help="First must activate pfla_softmax_use_obo. This makes it a learned off‑by‑one (+obo) addend.")
     model_group.add_argument("--pfla_softmax_obo",          type=float, default=0.0)
 
     # interpolation variant
