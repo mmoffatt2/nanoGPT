@@ -278,7 +278,8 @@ class GPTConfig:
     pfla_softmax_use_learned_divisor: bool = False
     pfla_softmax_gamma_init: float  = 1.0   # γ initial value iff learned
 
-    pfla_softmax_use_learned_obo: bool = False
+    pfla_softmax_use_obo: bool = False # enables obo feature
+    pfla_softmax_use_learned_obo: bool = False # we require "use_obo" before use_learned_obo
     pfla_softmax_obo: float = 0.0           # fixed or initial OBO (+1) addend
 
     ### interpolation mode
