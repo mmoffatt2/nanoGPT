@@ -34,6 +34,7 @@ from sample import (
     sample_with_existing_model,
     custom_char_with_byte_fallback_encode as ccwb_encode,
     custom_char_with_byte_fallback_decode as ccwb_decode,
+    get_tokenizer_functions,
 )
 
 from rich.progress import (
@@ -403,43 +404,24 @@ class Trainer:
         if os.path.exists(meta_path):
             with open(meta_path, 'rb') as f:
                 meta = pickle.load(f)
-            if 'tokenizer' in meta and meta['tokenizer'] == 'tiktoken':
-                enc = tiktoken.get_encoding(meta['tiktoken_encoding'])
-                print(f"Using tiktoken encoding: {meta['tiktoken_encoding']}")
-                self.encode = lambda s: enc.encode(s, allowed_special={""})
-                self.decode = lambda l: enc.decode(l)
-            elif 'tokenizer' in meta and meta['tokenizer'] == 'sentencepiece':
-                self.separator_token = "▁"
-                self.stoi, self.itos = meta['stoi'], meta['itos']
-                self.encode = lambda s: [self.stoi[c] for c in s]
-                self.decode = lambda l: ''.join([self.itos[i] for i in l])
-            elif 'tokenizer' in meta and meta['tokenizer'] == 'custom_char_with_byte_fallback':
+            
+            # Use get_tokenizer_functions for all tokenizer types
+            self.encode, self.decode = get_tokenizer_functions(meta)
+            
+            # Store additional tokenizer-specific attributes if needed
+            if 'tokenizer' in meta:
+                if meta['tokenizer'] == 'sentencepiece':
+                    self.separator_token = "▁"
+                print(f"Using {meta['tokenizer']} tokenizer")
+            else:
+                print("Using default character-level tokenizer")
+            
+            # Store stoi/itos for other uses in the Trainer class
+            if 'stoi' in meta and 'itos' in meta:
                 self.stoi = meta['stoi']
                 self.itos = meta['itos']
-                # One-liners pointing at the shared helpers
-                self.encode = lambda s: ccwb_encode(s, self.stoi)
-                self.decode = lambda l: ccwb_decode(l, self.itos)
-                print("Using CustomCharTokenizerWithByteFallback tokenizer")
-            else:
-                self.stoi, self.itos = meta['stoi'], meta['itos']
-                self.encode = lambda s: [self.stoi[c] for c in s]
-                self.decode = lambda l: ''.join([self.itos[i] for i in l])
         else:
-            raise FileNotFoundError(f"Meta file not found at {meta_path}")
-
-
-    def custom_char_with_byte_fallback_encode(self, text):
-        ids = []
-        for ch in text:
-            if ch in self.stoi:
-                ids.append(self.stoi[ch])
-            else:
-                # Byte fallback
-                byte_sequence = ch.encode('utf-8')
-                for byte in byte_sequence:
-                    ids.append(self.stoi[byte])
-
-        return ids
+            sys.exit("Error: meta.pkl not found")
 
     @torch.no_grad()
     def sample_and_print(self):
@@ -533,7 +515,7 @@ class Trainer:
 
             # Also store total token counts per dataset.
             self.dataset_size_tokens = {d: len(self.train_data_dict[d]) for d in self.args.multicontext_datasets}
-            # tell the model we are in “multicontext” mode and pass
+            # tell the model we are in "multicontext" mode and pass
             #         the (ordered) list of vocab sizes it needs.
             self.model_args['multicontext'] = True
             self.model_args['vocab_sizes'] = [
