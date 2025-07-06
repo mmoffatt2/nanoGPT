@@ -51,7 +51,7 @@ def parse_arguments():
     parser.add_argument("--json_tokens_file", type=str, default=None, help="Path to JSON file containing tokens for json_byte_fallback tokenizer")
 
     # Additional options
-    parser.add_argument("--track_token_counts", action="store_true", help="Track how often each token appears and store in meta.pkl")
+    parser.add_argument("-T", "--track_token_counts", action="store_true", help="Track how often each token appears and store in meta.pkl")
 
     return parser.parse_args()
 
