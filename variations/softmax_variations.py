@@ -685,20 +685,17 @@ class PFLASoftmax(nn.Module):
 
         # -------------- normalisation controls (as before) -----------------
         self.use_learned_divisor = config.pfla_softmax_use_learned_divisor
+        self.use_obo             = config.pfla_softmax_use_obo
         self.use_learned_obo     = config.pfla_softmax_use_learned_obo
-        self.fixed_obo           = config.pfla_softmax_obo
+        self.obo_init_val        = config.pfla_softmax_obo
 
         if self.use_learned_divisor:
-            self._gamma_raw = nn.Parameter(
-                torch.log(torch.exp(torch.tensor(config.pfla_softmax_gamma_init)) - 1)
-            )
-            self._sp_gamma = nn.Softplus()
+            self._gamma_raw = nn.Parameter(torch.tensor(config.pfla_softmax_gamma_init))
+            self._sp_gamma = nn.ReLU()
 
         if self.use_learned_obo:
-            self._obo_raw = nn.Parameter(
-                torch.log(torch.exp(torch.tensor(self.fixed_obo)) - 1)
-            )
-            self._sp_obo = nn.Softplus()
+            self._obo_raw = nn.Parameter(torch.tensor(self.obo_init_val))
+            self._sp_obo = torch.exp()
 
     # ---------------------------------------------------------------------
     def _linear_interp(self, y_knots: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
@@ -750,11 +747,14 @@ class PFLASoftmax(nn.Module):
             out = y_pos / gamma
         else:
             denom = y_pos.sum(dim=self.dim, keepdim=True) + eps   # ← EPS
-            if self.use_learned_obo:
-                obo = self._sp_obo(self._obo_raw)
+            if self.use_obo:
+                if self.use_learned_obo:
+                    obo = self._sp_obo(self._obo_raw)
+                else:
+                    obo = self._sp_obo(self.obo_init_val)
+                out = y_pos / (denom + obo)
             else:
-                obo = self.fixed_obo
-            out = y_pos / (denom + obo)
+                out = y_pos / (denom)
 
         return out
 
