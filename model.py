@@ -500,10 +500,13 @@ class GPT(nn.Module):
             for i in range(len(token_list)):
                 logits.append(self.transformer[f'lm_head_{i}'](x))
 
+            # Soft‑cap **each** logits tensor (training & inference)
             if self.config.final_logit_softcapping is not None:
-                logits = logits / self.config.final_logit_softcapping
-                logits = torch.tanh(logits)
-                logits = logits * self.config.final_logit_softcapping
+                logits = [
+                    torch.tanh(logit_var / self.config.final_logit_softcapping) *
+                    self.config.final_logit_softcapping
+                    for logit_var in logits
+                ]
 
             # 6. Compute losses if targets are provided
             # If we only want the last token, adapt the slices as you prefer
@@ -606,18 +609,26 @@ class GPT(nn.Module):
             if self.n_embd_wte:
                 x = F.linear(x, self.transformer.scale_down.weight.t())
 
-            if self.config.final_logit_softcapping is not None:
-                logits = logits / self.config.final_logit_softcapping
-                logits = torch.tanh(logits)
-                logits = logits * self.config.final_logit_softcapping
 
             if targets is not None:
                 # if we are given some desired targets also calculate the loss
                 logits = self.lm_head(x)
+
+                if self.config.final_logit_softcapping is not None:
+                    logits = logits / self.config.final_logit_softcapping
+                    logits = torch.tanh(logits)
+                    logits = logits * self.config.final_logit_softcapping
+
                 loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
             else:
                 # inference-time mini-optimization: only forward the lm_head on the very last position
                 logits = self.lm_head(x[:, [-1], :]) # note: using list [-1] to preserve the time dim
+
+                if self.config.final_logit_softcapping is not None:
+                    logits = logits / self.config.final_logit_softcapping
+                    logits = torch.tanh(logits)
+                    logits = logits * self.config.final_logit_softcapping
+
                 loss = None
 
             return logits, loss
