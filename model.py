@@ -96,7 +96,7 @@ class Block(nn.Module):
                     return x, mlp_res
 
         if self.use_gradient_checkpointing and x.requires_grad:
-            return checkpoint.checkpoint(custom_forward, x, use_reentrant=False)
+            return checkpoint.checkpoint(custom_forward, x, iter_num, mlp_res, use_reentrant=False)
         else:
             return custom_forward(x, iter_num, mlp_res)
 
@@ -462,20 +462,16 @@ class GPT(nn.Module):
             layer_idx = 1
             mlp_res = None
             for block in self.transformer.h:
-                if self.config.use_gradient_checkpointing:
-                    # TODO: see if this still works with and without mlp res
-                    x = checkpoint.checkpoint(block, x, iter_num, use_reentrant=self.config.recompute_backward_pass)
-                else:
-                    x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
+                x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
 
                 # TODO: abstact into a method
-                if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == layer:
+                if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == layer_idx:
                     for lpe in self.learned_position_embeddings:
                         out = lpe(b, t, x, iter_num)
                         # Accumulate embedding sum
                         learned_sum = out if learned_sum is None else learned_sum + out
 
-                if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == layer:
+                if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == layer_idx:
                     # Add learned embeddings to x
                     x = x + learned_sum
                 # END lpe section
@@ -573,40 +569,37 @@ class GPT(nn.Module):
             if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
                 x = self.lsv_matrix(x)
 
-            layer = 1
+            layer_idx = 1
             mlp_res = None
             for block in self.transformer.h:
                 # Propagate tokens through layers
-                if self.config.use_gradient_checkpointing:
-                    x = checkpoint.checkpoint(block, x, iter_num, use_reentrant=self.config.recompute_backward_pass)
-                else:
-                    x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
+                x, mlp_res = block(x, iter_num, mlp_res=mlp_res)
 
                 # Intercept for Learned Steering Vectors
-                if self.use_lsv and layer == self.config.apply_lsv_at_layer_idx:
+                if self.use_lsv and layer_idx == self.config.apply_lsv_at_layer_idx:
                     x = self.lsv_matrix(x)
                     # x = self.apply_learned_vector_to_layer_output(x)
 
                 # TODO: abstact into a method
-                if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == layer:
+                if self.config.n_lpe != 0 and self.config.target_layer_in_lpe == layer_idx:
                     for lpe in self.learned_position_embeddings:
                         out = lpe(b, t, x, iter_num)
                         # Accumulate embedding sum
                         learned_sum = out if learned_sum is None else learned_sum + out
 
-                if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == layer:
+                if self.config.n_lpe != 0 and self.config.target_layer_out_lpe == layer_idx:
                     # Add learned embeddings to x
                     x = x + learned_sum
                 # END lpe section
 
                 # Intercept for Steering Vectors
-                if self.config.apply_vector_at_layer_idx is not None and layer == self.config.apply_vector_at_layer_idx:
+                if self.config.apply_vector_at_layer_idx is not None and layer_idx == self.config.apply_vector_at_layer_idx:
                     x = self.apply_vector_to_layer_output(x)
-                if self.config.obtain_vector_at_layer_idx is not None and layer == self.config.obtain_vector_at_layer_idx:
-                    print(layer, self.config.obtain_vector_at_layer_idx)
+                if self.config.obtain_vector_at_layer_idx is not None and layer_idx == self.config.obtain_vector_at_layer_idx:
+                    print(layer_idx, self.config.obtain_vector_at_layer_idx)
                     x = self.obtain_vector_from_layer_output(x)
 
-                layer +=1
+                layer_idx +=1
 
             x = self.transformer.ln_f(x)
 
