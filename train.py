@@ -97,8 +97,20 @@ class Trainer:
         self.iter_latency_avg: float = 0.0  # running mean ms / iteration
 
         # store overall statistics for weights and activations
-        self.latest_overall_weight_stats = {'stdev': 0.0, 'kurtosis': 0.0, 'max': 0.0, 'min': 0.0}
-        self.latest_overall_activation_stats = {'stdev': 0.0, 'kurtosis': 0.0, 'max': 0.0, 'min': 0.0}
+        self.latest_overall_weight_stats = {
+            'stdev': 0.0,
+            'kurtosis': 0.0,
+            'max': 0.0,
+            'min': 0.0,
+            'abs_max': 0.0,
+        }
+        self.latest_overall_activation_stats = {
+            'stdev': 0.0,
+            'kurtosis': 0.0,
+            'max': 0.0,
+            'min': 0.0,
+            'abs_max': 0.0,
+        }
 
         # calculation on end time via eval cycle
         self.eval_cycle_window = deque(maxlen=self.args.eval_cycle_window)
@@ -230,6 +242,7 @@ class Trainer:
 
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number
+            self.best_iter = 0 # for starting from scratch
 
             self.optimizer = self.create_optimizer()
             self.scaler = torch.amp.GradScaler(self.device_type, enabled=(self.args.dtype == 'float16'))
@@ -293,6 +306,7 @@ class Trainer:
 
             self.iter_num = 0 # for starting from scratch
             self.best_val_loss = 1e9 # really big number
+            self.best_iter = 0 # really big number
 
             variation_dict = model_variation_dictionary[self.args.gpt2_type]
             # NOTE: the hierarchy of parameters goes: 1)variation_dict >> 2)cmd-line args >> 3)GPTConfig defaults
@@ -413,10 +427,10 @@ class Trainer:
         if os.path.exists(meta_path):
             with open(meta_path, 'rb') as f:
                 meta = pickle.load(f)
-            
+
             # Use get_tokenizer_functions for all tokenizer types
             self.encode, self.decode = get_tokenizer_functions(meta)
-            
+
             # Store additional tokenizer-specific attributes if needed
             if 'tokenizer' in meta:
                 if meta['tokenizer'] == 'sentencepiece':
@@ -424,7 +438,7 @@ class Trainer:
                 print(f"Using {meta['tokenizer']} tokenizer")
             else:
                 print("Using default character-level tokenizer")
-            
+
             # Store stoi/itos for other uses in the Trainer class
             if 'stoi' in meta and 'itos' in meta:
                 self.stoi = meta['stoi']
@@ -612,17 +626,17 @@ class Trainer:
             ix = None
             # For each context/dataset, grab a batch
             for dataset_name in self.args.multicontext_datasets:
-                data = (self.train_data_dict[dataset_name] 
+                data = (self.train_data_dict[dataset_name]
                         if split == 'train' else self.val_data_dict[dataset_name])
                 if ix is None:
                     ix = torch.randint(len(data) - self.args.block_size, (self.args.batch_size,))
                 # pick random offset
                 x = torch.stack([
-                    torch.from_numpy(data[i : i+self.args.block_size].astype(np.int64)) 
+                    torch.from_numpy(data[i : i+self.args.block_size].astype(np.int64))
                     for i in ix
                 ])
                 y = torch.stack([
-                    torch.from_numpy(data[i+1 : i+1+self.args.block_size].astype(np.int64)) 
+                    torch.from_numpy(data[i+1 : i+1+self.args.block_size].astype(np.int64))
                     for i in ix
                 ])
                 # Move to device
@@ -867,12 +881,36 @@ class Trainer:
         self.latest_overall_weight_stats = overall_wt
         self.latest_overall_activation_stats = overall_act
 
+        if self.args.tensorboard_log:
+            self.writer.add_scalars(
+                "model_stats",
+                {
+                    "weight_stdev": overall_wt['stdev'],
+                    "weight_kurtosis": overall_wt['kurtosis'],
+                    "weight_max": overall_wt['max'],
+                    "weight_min": overall_wt['min'],
+                    "weight_abs_max": overall_wt['abs_max'],
+                    "activation_stdev": overall_act['stdev'],
+                    "activation_kurtosis": overall_act['kurtosis'],
+                    "activation_max": overall_act['max'],
+                    "activation_min": overall_act['min'],
+                    "activation_abs_max": overall_act['abs_max'],
+                },
+                self.iter_num,
+            )
+
         print("Weight Statistics per tensor:")
         for name, s in weight_stats.items():
-            print(f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, max {s['max']:.6f}, min {s['min']:.6f}")
+            print(
+                f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, "
+                f"max {s['max']:.6f}, min {s['min']:.6f}, abs_max {s['abs_max']:.6f}"
+            )
         print("Activation Statistics per tensor:")
         for name, s in act_stats.items():
-            print(f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, max {s['max']:.6f}, min {s['min']:.6f}")
+            print(
+                f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, "
+                f"max {s['max']:.6f}, min {s['min']:.6f}, abs_max {s['abs_max']:.6f}"
+            )
 
         self.model.train()
         return out
@@ -1290,8 +1328,8 @@ class Trainer:
 
                     if losses['val'] < self.best_val_loss or self.args.always_save_checkpoint:
                         if losses['val'] < self.best_val_loss:
-                            self.iter_num_best_val_loss = self.iter_num
                             self.best_val_loss = losses['val']
+                            self.best_iter = self.iter_num
                             # Save best validation loss
                             peak_mb = self.peak_gpu_usage / (1024 ** 2)
                             with open(os.path.join(self.args.out_dir, 'best_val_loss_and_iter.txt'), "w") as best_loss_file:
@@ -1308,10 +1346,12 @@ class Trainer:
                                     f" {self.latest_overall_weight_stats['kurtosis']:.6f},"
                                     f" {self.latest_overall_weight_stats['max']:.6f},"
                                     f" {self.latest_overall_weight_stats['min']:.6f},"
+                                    f" {self.latest_overall_weight_stats['abs_max']:.6f},"
                                     f" {self.latest_overall_activation_stats['stdev']:.6f},"
                                     f" {self.latest_overall_activation_stats['kurtosis']:.6f},"
-                                    f" {self.latest_overall_activation_stats['max']:.6f}"
-                                    f" {self.latest_overall_activation_stats['min']:.6f}"
+                                    f" {self.latest_overall_activation_stats['max']:.6f},"
+                                    f" {self.latest_overall_activation_stats['min']:.6f},"
+                                    f" {self.latest_overall_activation_stats['abs_max']:.6f}"
                                 )
                             # Reset early exit counter
                             num_steps_with_worse_loss = 0
@@ -1408,8 +1448,9 @@ class Trainer:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.grad_clip)
 
                 if isinstance(self.optimizer, ActRegularizedAdamW):
+                    stat_key = getattr(self.args, "activation_stat", "stdev")
                     self.optimizer.set_activation_stat(
-                        self.latest_overall_activation_stats["stdev"]
+                        self.latest_overall_activation_stats.get(stat_key, 0.0)
                     )
 
                 self.scaler.step(self.optimizer)
@@ -1517,11 +1558,13 @@ class Trainer:
                         hour=f"{int((self.time_remaining_ms // 3_600_000) % 24):02d}",
                         min=f"{int((self.time_remaining_ms // 60_000) % 60):02d}",
                         best_val_loss=f"{self.best_val_loss:.3f}",
+                        best_iter=f"{self.best_iter}",
                 )
+                live.update(Group(progress.get_renderable(), cli_text))
 
                 # End of training actions
                 if self.iter_num > self.args.max_iters:
-                    print(self.best_val_loss)
+                    print(self.best_val_loss, self.best_iter)
                     if self.args.only_save_checkpoint_at_end:
 
                         self.save_checkpoint('ckpt.pt')

@@ -1002,6 +1002,7 @@ def _adamw(param_groups, args):
         weight_decay=args.adamw_weight_decay,
     )
 
+
 class ActRegularizedAdamW(AdamW):
     """AdamW with activation-aware weight decay.
 
@@ -1011,9 +1012,10 @@ class ActRegularizedAdamW(AdamW):
     :func:`set_activation_stat` prior to each :func:`step` call.
     """
 
-    def __init__(self, params, *, activation_decay=0.0, **kwargs):
+    def __init__(self, params, *, activation_decay=0.0, stat_type="stdev", **kwargs):
         super().__init__(params, **kwargs)
         self.activation_decay = activation_decay
+        self.stat_type = stat_type
         self._activation_stat: float = 0.0
 
     def set_activation_stat(self, stat: float) -> None:
@@ -1043,8 +1045,8 @@ def _adamw_act_reg(param_groups, args):
         eps=args.adamw_eps,
         weight_decay=args.adamw_weight_decay,
         activation_decay=getattr(args, "activation_decay", 0.0),
+        stat_type=getattr(args, "activation_stat", "stdev"),
     )
-
 
 def _radam(param_groups, args):
     return RAdam(

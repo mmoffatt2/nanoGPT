@@ -180,6 +180,13 @@ def parse_args():
         default=0.0,
         help="L2 regularization coefficient for activations used by adamw_act_reg optimiser.",
     )
+    training_group.add_argument(
+        "--activation_stat",
+        type=str,
+        default="stdev",
+        choices=["stdev", "kurtosis", "max", "min", "abs_max"],
+        help="Statistic to modulate activation regularization for adamw_act_reg optimizer.",
+    )
     # --------  ADAGRAD --------------------------------------------------
     training_group.add_argument("--adagrad_lr_decay", type=float, default=0, help="Learning rate decay for Adagrad optimizer.")
     # --------  RMSProp --------------------------------------------------

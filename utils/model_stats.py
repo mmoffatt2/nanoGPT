@@ -15,12 +15,14 @@ def compute_weight_stats(model):
             'kurtosis': float(kurtosis(flat, fisher=False)),
             'max': torch.max(data).item(),
             'min': torch.min(data).item(),
+            'abs_max': torch.max(data.abs()).item(),
         }
     overall = {
         'stdev': 0.0,
         'kurtosis': 0.0,
         'max': 0.0,
         'min': 0.0,
+        'abs_max': 0.0,
     }
     if all_vals:
         cat = torch.cat(all_vals)
@@ -30,6 +32,7 @@ def compute_weight_stats(model):
             'kurtosis': float(kurtosis(cat_np, fisher=False)),
             'max': torch.max(cat).item(),
             'min': torch.min(cat).item(),
+            'abs_max': torch.max(cat.abs()).item(),
         }
     return stats, overall
 
@@ -50,6 +53,7 @@ def compute_activation_stats(model, inputs, targets=None, iter_num=None):
                 'kurtosis': float(kurtosis(flat, fisher=False)),
                 'max': torch.max(data).item(),
                 'min': torch.min(data).item(),
+                'abs_max': torch.max(data.abs()).item(),
             }
         hooks.append(module.register_forward_hook(hook_fn))
 
@@ -68,7 +72,7 @@ def compute_activation_stats(model, inputs, targets=None, iter_num=None):
     for h in hooks:
         h.remove()
 
-    overall = {'stdev': 0.0, 'kurtosis': 0.0, 'max': 0.0, 'min': 0.0}
+    overall = {'stdev': 0.0, 'kurtosis': 0.0, 'max': 0.0, 'min': 0.0, 'abs_max': 0.0}
     if all_tensors:
         cat = torch.cat(all_tensors)
         cat_np = cat.numpy()
@@ -77,6 +81,7 @@ def compute_activation_stats(model, inputs, targets=None, iter_num=None):
             'kurtosis': float(kurtosis(cat_np, fisher=False)),
             'max': torch.max(cat).item(),
             'min': torch.min(cat).item(),
+            'abs_max': torch.max(cat.abs()).item(),
         }
 
     return activation_stats, overall
