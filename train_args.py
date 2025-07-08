@@ -978,6 +978,13 @@ def parse_args():
     logging_group.add_argument('--tensorboard_run_name', type=str, default=None)
     logging_group.add_argument('--tensorboard_graph', default=True, action=argparse.BooleanOptionalAction)
 
+    # Metric logging toggles
+    logging_group.add_argument('--log_btc_train', default=False, action=argparse.BooleanOptionalAction, help='Log better-than-chance training metrics')
+    logging_group.add_argument('--log_btc_per_param', default=False, action=argparse.BooleanOptionalAction, help='Log better-than-chance-per-parameter metrics')
+    logging_group.add_argument('--log_grad_norm', default=False, action=argparse.BooleanOptionalAction, help='Log gradient norm metrics')
+    logging_group.add_argument('--log_grad_std', default=False, action=argparse.BooleanOptionalAction, help='Log gradient std metrics')
+    logging_group.add_argument('--log_all_metrics', default=False, action=argparse.BooleanOptionalAction, help='Enable logging of all metrics including gns')
+
     ## Export Model graph
     logging_group.add_argument('--export_model_graph', default=False, action=argparse.BooleanOptionalAction, help="exports tensorboard model of graph")
 
@@ -1003,6 +1010,14 @@ def parse_args():
     logging_group.add_argument('--print_model_info', default=True, action=argparse.BooleanOptionalAction)
 
     args = parser.parse_args()
+
+    if args.log_all_metrics:
+        args.log_btc_train = True
+        args.log_btc_per_param = True
+        args.log_grad_norm = True
+        args.log_grad_std = True
+        if args.gns_type is None:
+            args.gns_type = 'sogns'
 
     if args.load_config_json is not None:
         with open(args.load_config_json, 'r') as config_file:

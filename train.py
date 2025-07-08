@@ -12,6 +12,11 @@ import time
 from collections import deque
 from datetime import datetime, timedelta
 
+from rich.console import Group
+from rich.text import Text
+from rich.live import Live
+
+
 from train_variations.optimizer_variants import (
     optimizer_dictionary,
     ActRegularizedAdamW,
@@ -1000,28 +1005,30 @@ class Trainer:
                     )
 
             # vocab agnostic, cross tokenizer comparison
-            self.writer.add_scalars(
-                    f"{target_dataset}/chance_tokens",
-                    {f"val_chance": val_better_than_chance},
-                    tokens_trained
-                    )
-            self.writer.add_scalars(
-                    f"{target_dataset}/chance_iters",
-                    {f"val_chance": val_better_than_chance},
-                    self.iter_num
-                    )
+            if self.args.log_btc_train:
+                self.writer.add_scalars(
+                        f"{target_dataset}/chance_tokens",
+                        {"val_chance": val_better_than_chance},
+                        tokens_trained
+                        )
+                self.writer.add_scalars(
+                        f"{target_dataset}/chance_iters",
+                        {"val_chance": val_better_than_chance},
+                        self.iter_num
+                        )
 
             # vocab agnostic, cross parameter size comparison
-            self.writer.add_scalars(
-                    f"{target_dataset}/btc_per_param_tokens",
-                    {f"val_chance": val_better_than_chance/self.model.num_param},
-                    tokens_trained
-                    )
-            self.writer.add_scalars(
-                    f"{target_dataset}/btc_per_param_iters",
-                    {f"val_chance": val_better_than_chance/self.model.num_param},
-                    self.iter_num
-                    )
+            if self.args.log_btc_per_param:
+                self.writer.add_scalars(
+                        f"{target_dataset}/btc_per_param_tokens",
+                        {"val_chance": val_better_than_chance/self.model.num_param},
+                        tokens_trained
+                        )
+                self.writer.add_scalars(
+                        f"{target_dataset}/btc_per_param_iters",
+                        {"val_chance": val_better_than_chance/self.model.num_param},
+                        self.iter_num
+                        )
 
             self.writer.add_scalar(f"{target_dataset}/epoch", epoch, self.iter_num)
             self.writer.add_scalar(f"{target_dataset}/tokens_trained", tokens_trained, self.iter_num)
@@ -1056,38 +1063,38 @@ class Trainer:
         if self.args.tensorboard_log:
             self.writer.add_scalars(
                     f"{target_dataset}/loss_iters",
-                    {f"train": loss_training},
+                    {"train": loss_training},
                     self.iter_num
                     )
             self.writer.add_scalars(
                     f"{target_dataset}/loss_tokens",
-                    {f"train": loss_training},
+                    {"train": loss_training},
                     tokens_trained
                     )
 
-            # vocab agnostic, cross tokenizer comparison
-            self.writer.add_scalars(
-                    f"{target_dataset}/chance_tokens",
-                    {f"train_chance": train_better_than_chance},
-                    tokens_trained
-                    )
-            self.writer.add_scalars(
-                    f"{target_dataset}/chance_iters",
-                    {f"train_chance": train_better_than_chance},
-                    self.iter_num
-                    )
+            if self.args.log_btc_train:
+                self.writer.add_scalars(
+                        f"{target_dataset}/chance_tokens",
+                        {"train_chance": train_better_than_chance},
+                        tokens_trained
+                        )
+                self.writer.add_scalars(
+                        f"{target_dataset}/chance_iters",
+                        {"train_chance": train_better_than_chance},
+                        self.iter_num
+                        )
 
-            # vocab agnostic, cross parameter size comparison
-            self.writer.add_scalars(
-                    f"{target_dataset}/btc_per_param_tokens",
-                    {f"train_chance": train_better_than_chance/self.model.num_param},
-                    tokens_trained
-                    )
-            self.writer.add_scalars(
-                    f"{target_dataset}/btc_per_param_iters",
-                    {f"train_chance": train_better_than_chance/self.model.num_param},
-                    self.iter_num
-                    )
+            if self.args.log_btc_per_param:
+                self.writer.add_scalars(
+                        f"{target_dataset}/btc_per_param_tokens",
+                        {"train_chance": train_better_than_chance/self.model.num_param},
+                        tokens_trained
+                        )
+                self.writer.add_scalars(
+                        f"{target_dataset}/btc_per_param_iters",
+                        {"train_chance": train_better_than_chance/self.model.num_param},
+                        self.iter_num
+                        )
 
             self.writer.add_scalar(f"{target_dataset}/mfu_pct", running_mfu * 100, self.iter_num)
             self.writer.add_scalar(f"{target_dataset}/vram", self.vram_allocated, self.iter_num)
@@ -1102,11 +1109,13 @@ class Trainer:
             self.writer.add_scalar(f"{target_dataset}/batch_size_iter", self.args.batch_size, self.iter_num)
             self.writer.add_scalar(f"{target_dataset}/batch_size_tokens", self.args.batch_size, tokens_trained)
 
-            self.writer.add_scalar(f"{target_dataset}/grad_norm_iters", self.grad_norm, self.iter_num)
-            self.writer.add_scalar(f"{target_dataset}/grad_norm_tokens", self.grad_norm, tokens_trained)
+            if self.args.log_grad_norm:
+                self.writer.add_scalar(f"{target_dataset}/grad_norm_iters", self.grad_norm, self.iter_num)
+                self.writer.add_scalar(f"{target_dataset}/grad_norm_tokens", self.grad_norm, tokens_trained)
 
-            self.writer.add_scalar(f"{target_dataset}/grad_std_iters", self.grad_std, self.iter_num)
-            self.writer.add_scalar(f"{target_dataset}/grad_std_tokens", self.grad_std, tokens_trained)
+            if self.args.log_grad_std:
+                self.writer.add_scalar(f"{target_dataset}/grad_std_iters", self.grad_std, self.iter_num)
+                self.writer.add_scalar(f"{target_dataset}/grad_std_tokens", self.grad_std, tokens_trained)
 
             if self.args.gns_type is not None:
                 self.writer.add_scalar(f"{target_dataset}/gns_iters", self.gns, self.iter_num)
@@ -1219,12 +1228,15 @@ class Trainer:
             BarColumn(),
             TaskProgressColumn(),
             TimeRemainingColumn(compact=False),
-            TextColumn("-- [bold dark_cyan]BestValLoss:[/bold dark_cyan]{task.fields[best_val_loss]}"),
+            TextColumn("-- [bold dark_cyan]BestIter:[/bold dark_cyan]{task.fields[best_iter]} [bold dark_cyan]BestValLoss:[/bold dark_cyan]{task.fields[best_val_loss]}"),
             TextColumn("-- [bold purple3]ETA:[/bold purple3]{task.fields[eta]}"),
             TextColumn("[bold purple3]Remaining:[/bold purple3]{task.fields[hour]}h{task.fields[min]}m"),
             TextColumn("[bold purple3]total_est:[/bold purple3]{task.fields[total_hour]}h{task.fields[total_min]}m"),
         )
-        with progress:
+
+        cli_settings = " ".join(sys.argv)
+        cli_text = Text(f"CLI: {cli_settings}", style="chartreuse1")
+        with Live(Group(progress.get_renderable(), cli_text), refresh_per_second=10) as live:
             task_id = progress.add_task(
                 "[green]Training...",
                 total=((self.args.max_iters - self.iter_num) + self.evaluations_remaining * self.args.eval_iters),
@@ -1233,7 +1245,8 @@ class Trainer:
                 total_min=f"{int((self.total_time_est_ms // 60_000) % 60):02d}",
                 hour=f"{int((self.time_remaining_ms // (1000*3600)) % 24):02d}",
                 min=f"{int((self.time_remaining_ms // 60000) % 60):02d}",
-                best_val_loss=f"{self.best_val_loss:.3f}"
+                best_val_loss=f"{self.best_val_loss:.3f}",
+                best_iter=f"{self.best_iter}",
             )
 
             while True:
@@ -1501,14 +1514,17 @@ class Trainer:
                         for i, mc_dataset in enumerate(self.args.multicontext_datasets):
                             self.mc_btc_train[mc_dataset] = self.vocab_sizes[mc_dataset] / math.exp(training_losses[i].item())
                             log_message+= f", {self.underscore_abbr(mc_dataset)}"
-                            log_message+= f" btc {self.mc_btc_train[mc_dataset]:.4f}"
+                            if self.args.log_btc_train:
+                                log_message+= f" btc {self.mc_btc_train[mc_dataset]:.4f}"
                             log_message+= f", {self.underscore_abbr(mc_dataset)}"
                             log_message+= f" loss {training_losses[i].item():.4f}"
                     else:
                         better_than_chance = self.model_args['vocab_size'] / math.exp(lossf)
                         log_message+= f", loss {lossf:.4f}"
-                        log_message+=f", btc_train {better_than_chance:.2e}"
-                        log_message+=f", btc_train_per_param {(better_than_chance/self.model.num_param):.2e}"
+                        if self.args.log_btc_train:
+                            log_message+=f", btc_train {better_than_chance:.2e}"
+                        if self.args.log_btc_per_param:
+                            log_message+=f", btc_train_per_param {(better_than_chance/self.model.num_param):.2e}"
 
                     if self.args.dataset_list:
                         log_message+= f", epoch {self.epochs_trained_dict[prior_dataset]:2.2f}"
@@ -1523,8 +1539,10 @@ class Trainer:
                         log_message+= f", gns {self.gns:.2f}"
                     log_message+= f", batch_size {self.args.batch_size}"
                     log_message+= f", lr {self.lr:.4f}"
-                    log_message+= f", grad_norm {self.grad_norm:2f}"
-                    log_message+= f", grad_std {self.grad_std:.2f}"
+                    if self.args.log_grad_norm:
+                        log_message+= f", grad_norm {self.grad_norm:2f}"
+                    if self.args.log_grad_std:
+                        log_message+= f", grad_std {self.grad_std:.2f}"
 
                     print(log_message)
 
