@@ -985,6 +985,16 @@ def parse_args():
     logging_group.add_argument('--log_grad_std', default=False, action=argparse.BooleanOptionalAction, help='Log gradient std metrics')
     logging_group.add_argument('--log_all_metrics', default=False, action=argparse.BooleanOptionalAction, help='Enable logging of all metrics including gns')
 
+    # Turn activation/weight statistics off to save CPU RAM and wall time.
+    training_group.add_argument(
+        '--compute_model_stats',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help='If true (default) run compute_weight_stats / compute_activation_stats '
+             'every eval cycle.  Disable to eliminate the large host‑RAM spike that '
+             'occurs when those tensors are copied to CPU.'
+    )
+
     ## Export Model graph
     logging_group.add_argument('--export_model_graph', default=False, action=argparse.BooleanOptionalAction, help="exports tensorboard model of graph")
 

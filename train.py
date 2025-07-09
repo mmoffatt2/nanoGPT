@@ -117,6 +117,9 @@ class Trainer:
             'abs_max': 0.0,
         }
 
+        # whether to show all model stats
+        self.compute_model_stats = self.args.compute_model_stats
+
         # calculation on end time via eval cycle
         self.eval_cycle_window = deque(maxlen=self.args.eval_cycle_window)
         self.eval_cycle_latency_avg: float = 0.0
@@ -880,29 +883,32 @@ class Trainer:
                 out[split + "_std"] = losses.std()
 
         # compute statistics from a single validation batch
-        X_stat, Y_stat, _ = self.get_batch('val')
-        act_stats, overall_act = compute_activation_stats(self.model, X_stat, Y_stat, self.iter_num)
-        weight_stats, overall_wt = compute_weight_stats(self.model)
-        self.latest_overall_weight_stats = overall_wt
-        self.latest_overall_activation_stats = overall_act
-
-        if self.args.tensorboard_log:
-            self.writer.add_scalars(
-                "model_stats",
-                {
-                    "weight_stdev": overall_wt['stdev'],
-                    "weight_kurtosis": overall_wt['kurtosis'],
-                    "weight_max": overall_wt['max'],
-                    "weight_min": overall_wt['min'],
-                    "weight_abs_max": overall_wt['abs_max'],
-                    "activation_stdev": overall_act['stdev'],
-                    "activation_kurtosis": overall_act['kurtosis'],
-                    "activation_max": overall_act['max'],
-                    "activation_min": overall_act['min'],
-                    "activation_abs_max": overall_act['abs_max'],
-                },
-                self.iter_num,
+        if self.compute_model_stats:
+            X_stat, Y_stat, _ = self.get_batch('val')
+            act_stats, overall_act = compute_activation_stats(
+                self.model, X_stat, Y_stat, self.iter_num
             )
+            weight_stats, overall_wt = compute_weight_stats(self.model)
+
+            self.latest_overall_weight_stats     = overall_wt
+            self.latest_overall_activation_stats = overall_act
+        else:
+            act_stats  = {}   # keep API intact
+            weight_stats = {}
+
+        if self.args.tensorboard_log and self.compute_model_stats:
+            # Weights
+            self.writer.add_scalar("weights/stdev",     overall_wt['stdev'],     self.iter_num)
+            self.writer.add_scalar("weights/kurtosis",  overall_wt['kurtosis'],  self.iter_num)
+            self.writer.add_scalar("weights/max",       overall_wt['max'],       self.iter_num)
+            self.writer.add_scalar("weights/min",       overall_wt['min'],       self.iter_num)
+            self.writer.add_scalar("weights/abs_max",   overall_wt['abs_max'],   self.iter_num)
+            # Activations
+            self.writer.add_scalar("activations/stdev",    overall_act['stdev'],     self.iter_num)
+            self.writer.add_scalar("activations/kurtosis", overall_act['kurtosis'],  self.iter_num)
+            self.writer.add_scalar("activations/max",      overall_act['max'],       self.iter_num)
+            self.writer.add_scalar("activations/min",      overall_act['min'],       self.iter_num)
+            self.writer.add_scalar("activations/abs_max",  overall_act['abs_max'],   self.iter_num)
 
         print("Weight Statistics per tensor:")
         for name, s in weight_stats.items():
@@ -1364,7 +1370,7 @@ class Trainer:
                                     f" {self.latest_overall_activation_stats['kurtosis']:.6f},"
                                     f" {self.latest_overall_activation_stats['max']:.6f},"
                                     f" {self.latest_overall_activation_stats['min']:.6f},"
-                                    f" {self.latest_overall_activation_stats['abs_max']:.6f}"
+                                    f" {self.latest_overall_activation_stats['abs_max']:.6f},"
                                 )
                             # Reset early exit counter
                             num_steps_with_worse_loss = 0
