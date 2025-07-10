@@ -120,6 +120,11 @@ class Trainer:
         # whether to show all model stats
         self.compute_model_stats = self.args.compute_model_stats
 
+        # Where to aggregate statistics:  'cpu' (default) or 'gpu'.
+        # The CLI flag is optional; fall back to CPU if it isn’t present.
+        stats_dev_flag  = getattr(self.args, "model_stats_device", "cpu")
+        self.stats_device = torch.device("cuda") if stats_dev_flag == "gpu" else torch.device("cpu")
+
         # calculation on end time via eval cycle
         self.eval_cycle_window = deque(maxlen=self.args.eval_cycle_window)
         self.eval_cycle_latency_avg: float = 0.0
@@ -885,10 +890,13 @@ class Trainer:
         # compute statistics from a single validation batch
         if self.compute_model_stats:
             X_stat, Y_stat, _ = self.get_batch('val')
-            act_stats, overall_act = compute_activation_stats(
-                self.model, X_stat, Y_stat, self.iter_num
+            # ── Run heavy ops on the selected device (GPU keeps host‑RAM flat) ──
+            act_stats,  overall_act  = compute_activation_stats(
+                self.model, X_stat, Y_stat, self.iter_num, device=self.stats_device
             )
-            weight_stats, overall_wt = compute_weight_stats(self.model)
+            weight_stats, overall_wt = compute_weight_stats(
+                self.model, device=self.stats_device
+            )
 
             self.latest_overall_weight_stats     = overall_wt
             self.latest_overall_activation_stats = overall_act

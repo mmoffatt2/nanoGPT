@@ -995,6 +995,14 @@ def parse_args():
              'occurs when those tensors are copied to CPU.'
     )
 
+    training_group.add_argument(
+            '--model_stats_device',
+            default='cpu',
+            choices=['cpu', 'gpu'],
+            help="Where to aggregate weight / activation statistics. "
+            "'gpu' avoids host‑RAM spikes; 'cpu' saves VRAM."
+            )
+
     ## Export Model graph
     logging_group.add_argument('--export_model_graph', default=False, action=argparse.BooleanOptionalAction, help="exports tensorboard model of graph")
 
