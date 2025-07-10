@@ -96,7 +96,7 @@ pip install numpy matplotlib plotly healpy
 
 To do this, we first sample vectors (if number format small enough we can do one
 vector for each possible xyz value), and project it onto the surface of the unit
-spehre, and add "1" for that region.
+sphere, and add "1" for that region.
 
 As latitude and longitude lines bunch at the north and south poles, creating
 distortion, we suggest utilizing a spherical tesselation as given by HEALPix,
