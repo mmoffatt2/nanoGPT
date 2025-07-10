@@ -900,36 +900,55 @@ class Trainer:
 
             self.latest_overall_weight_stats     = overall_wt
             self.latest_overall_activation_stats = overall_act
+
+            print("Weight Statistics per tensor:")
+            for name, s in weight_stats.items():
+                print(
+                    f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, "
+                    f"max {s['max']:.6f}, min {s['min']:.6f}, abs_max {s['abs_max']:.6f}"
+                )
+            print("Activation Statistics per tensor:")
+            for name, s in act_stats.items():
+                print(
+                    f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, "
+                    f"max {s['max']:.6f}, min {s['min']:.6f}, abs_max {s['abs_max']:.6f}"
+                )
         else:
             act_stats  = {}   # keep API intact
             weight_stats = {}
 
         if self.args.tensorboard_log and self.compute_model_stats:
-            # Weights
-            self.writer.add_scalar("weights/stdev",     overall_wt['stdev'],     self.iter_num)
-            self.writer.add_scalar("weights/kurtosis",  overall_wt['kurtosis'],  self.iter_num)
-            self.writer.add_scalar("weights/max",       overall_wt['max'],       self.iter_num)
-            self.writer.add_scalar("weights/min",       overall_wt['min'],       self.iter_num)
-            self.writer.add_scalar("weights/abs_max",   overall_wt['abs_max'],   self.iter_num)
-            # Activations
-            self.writer.add_scalar("activations/stdev",    overall_act['stdev'],     self.iter_num)
-            self.writer.add_scalar("activations/kurtosis", overall_act['kurtosis'],  self.iter_num)
-            self.writer.add_scalar("activations/max",      overall_act['max'],       self.iter_num)
-            self.writer.add_scalar("activations/min",      overall_act['min'],       self.iter_num)
-            self.writer.add_scalar("activations/abs_max",  overall_act['abs_max'],   self.iter_num)
+            self.writer.add_scalars(
+                "model_stats",
+                {
+                    "weight_stdev": overall_wt['stdev'],
+                    "weight_kurtosis": overall_wt['kurtosis'],
+                    "weight_max": overall_wt['max'],
+                    "weight_min": overall_wt['min'],
+                    "weight_abs_max": overall_wt['abs_max'],
+                    "activation_stdev": overall_act['stdev'],
+                    "activation_kurtosis": overall_act['kurtosis'],
+                    "activation_max": overall_act['max'],
+                    "activation_min": overall_act['min'],
+                    "activation_abs_max": overall_act['abs_max'],
+                },
+                self.iter_num,
+            )
 
-        print("Weight Statistics per tensor:")
-        for name, s in weight_stats.items():
-            print(
-                f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, "
-                f"max {s['max']:.6f}, min {s['min']:.6f}, abs_max {s['abs_max']:.6f}"
-            )
-        print("Activation Statistics per tensor:")
-        for name, s in act_stats.items():
-            print(
-                f"{name}: stdev {s['stdev']:.6f}, kurtosis {s['kurtosis']:.6f}, "
-                f"max {s['max']:.6f}, min {s['min']:.6f}, abs_max {s['abs_max']:.6f}"
-            )
+            # Log per-tensor stats grouped by statistic
+            for stat_key in ["stdev", "kurtosis", "max", "min", "abs_max"]:
+                if weight_stats:
+                    self.writer.add_scalars(
+                        f"weights/{stat_key}",
+                        {n: s[stat_key] for n, s in weight_stats.items()},
+                        self.iter_num,
+                    )
+                if act_stats:
+                    self.writer.add_scalars(
+                        f"activations/{stat_key}",
+                        {n: s[stat_key] for n, s in act_stats.items()},
+                        self.iter_num,
+                    )
 
         self.model.train()
         return out
