@@ -99,7 +99,7 @@ vector for each possible xyz value), and project it onto the surface of the unit
 sphere, and add "1" for that region.
 
 As latitude and longitude lines bunch at the north and south poles, creating
-distortion, we suggest utilizing a spherical tesselation as given by HEALPix,
+distortion, we suggest utilizing a spherical tessellation as given by HEALPix,
 which is very effective at removing distortion artifacts.
 
 ### Findings
