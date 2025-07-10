@@ -997,7 +997,7 @@ def parse_args():
 
     training_group.add_argument(
             '--model_stats_device',
-            default='cpu',
+            default='gpu',
             choices=['cpu', 'gpu'],
             help="Where to aggregate weight / activation statistics. "
             "'gpu' avoids host‑RAM spikes; 'cpu' saves VRAM."
