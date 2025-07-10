@@ -22,14 +22,15 @@ parameter_groups:
 # embedding_std_init: ["0.02"]
 
 compute_model_stats: [true]
-compile: [false] # currently compute model stats needs compile false
+model_stats_device: ["gpu"]
+compile: [true] # currently compute model stats needs compile false
 
 # base hyperparameters
-max_iters: [10000]
+max_iters: [5000]
 eval_interval: [250]
-n_layer: [12]
-n_head: [12]
-n_embd: [768]
+n_layer: [6]
+n_head: [6]
+n_embd: [384]
 block_size: [256]
 device: ["cuda"]
 dtype: ["bfloat16"]
@@ -43,7 +44,7 @@ optimizer: ["adamw_act_reg", "adamw"]
 activation_decay:
   conditions:
     - ["optimizer", "adamw_act_reg"]
-  options: ["0.0005", "0.001", "0.002"]
+  options: ["0.0001", "0.00001", "0.000001"]
 
 activation_stat:
   conditions:
