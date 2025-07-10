@@ -104,7 +104,7 @@ which is very effective at removing distortion artifacts.
 
 ### Findings
 
-These show both distinct concenstrations for floating point vs integer format,
+These show both distinct concentrations for floating point vs integer format,
 and different patterns that emerge as mantissa and exponent are increased. There
 are also certain clear pathways that emerge that can affect the transition of
 weight vectors as each vector is updated via backpropagation or reinforcement
