@@ -38,7 +38,7 @@ for (( n = 32; n <= 352; n+=32 )); do
   done
 done
 
-echo "integer with gaussian and stnadard deviations"
+echo "integer with gaussian and standard deviations"
 for (( n = 64; n <= 320; n+=64 )); do
   for (( i = 3; i <= 8; i++ )); do
     for (( std = 1; std <= 11; std+=2 )); do
