@@ -292,6 +292,7 @@ class Trainer:
                     state_dict[k[len('_orig_mod.'):]] = state_dict.pop(k)
             self.model.load_state_dict(state_dict)
             self.best_val_loss = checkpoint['best_val_loss']
+            self.best_iter = checkpoint['best_iter']
             if self.args.lsv_focused_training:
                 self.model.freeze_non_lsv_parameters()
 
@@ -1229,6 +1230,7 @@ class Trainer:
                 'model_args': self.model_args,
                 'iter_num': self.iter_num,
                 'best_val_loss': self.best_val_loss,
+                'best_iter': self.iter,
                 'config': vars(self.args),
                 }
         torch.save(checkpoint, os.path.join(self.args.out_dir, filename))
