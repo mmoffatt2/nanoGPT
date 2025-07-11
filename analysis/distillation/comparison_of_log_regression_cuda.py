@@ -23,7 +23,7 @@ def mse_inverse(y_true, y_pred):
 
 def save_regression_plot(x_vals, y_vals, fit_results, dim, metric_name, regression_type):
     plt.figure(figsize=(10, 6))
-    plt.scatter(x_vals, y_vals, color="red", s=1, alpha=0.3, label=f"Min {metric_name}")
+    plt.scatter(x_vals, y_vals, color="red", s=1, alpha=0.3, label=f"{metric_name}")
     if "log" in fit_results:
         plt.plot(x_vals, fit_results["log"][0], color="black", linestyle="--", linewidth=2,
                  label=f"Log Fit (MSEI={fit_results['log'][1]:.4f})")
