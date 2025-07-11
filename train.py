@@ -1230,7 +1230,7 @@ class Trainer:
                 'model_args': self.model_args,
                 'iter_num': self.iter_num,
                 'best_val_loss': self.best_val_loss,
-                'best_iter': self.iter,
+                'best_iter': self.best_iter,
                 'config': vars(self.args),
                 }
         torch.save(checkpoint, os.path.join(self.args.out_dir, filename))
