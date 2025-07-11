@@ -120,6 +120,7 @@ def parse_args():
             "sgd",
             "adam",
             "adamw",
+            "adamw_act_reg",
             "adamax",
             "radam",
             "nadam",
@@ -172,6 +173,20 @@ def parse_args():
     training_group.add_argument("--adamw_betas", type=float, nargs=2, default=[0.9, 0.999], help="Betas for AdamW optimizer.")
     training_group.add_argument("--adamw_eps", type=float, default=1e-8, help="Epsilon for AdamW optimizer.")
     training_group.add_argument("--adamw_weight_decay", type=float, default=0.01, help="Weight decay for AdamW optimizer.")
+    # --------  ADAMW_ACT_REG --------------------------------------------------
+    training_group.add_argument(
+        "--activation_decay",
+        type=float,
+        default=0.0,
+        help="L2 regularization coefficient for activations used by adamw_act_reg optimiser.",
+    )
+    training_group.add_argument(
+        "--activation_stat",
+        type=str,
+        default="stdev",
+        choices=["stdev", "kurtosis", "max", "min", "abs_max"],
+        help="Statistic to modulate activation regularization for adamw_act_reg optimizer.",
+    )
     # --------  ADAGRAD --------------------------------------------------
     training_group.add_argument("--adagrad_lr_decay", type=float, default=0, help="Learning rate decay for Adagrad optimizer.")
     # --------  RMSProp --------------------------------------------------
@@ -422,6 +437,7 @@ def parse_args():
             "layernorm",
             "hyperspherenorm",
             "dact",
+            "identity",
             ]
 
     model_group.add_argument("--norm_variant_attn", type=str, default="rmsnorm", choices=norm_variations)
@@ -962,6 +978,31 @@ def parse_args():
     logging_group.add_argument('--tensorboard_run_name', type=str, default=None)
     logging_group.add_argument('--tensorboard_graph', default=True, action=argparse.BooleanOptionalAction)
 
+    # Metric logging toggles
+    logging_group.add_argument('--log_btc_train', default=False, action=argparse.BooleanOptionalAction, help='Log better-than-chance training metrics')
+    logging_group.add_argument('--log_btc_per_param', default=False, action=argparse.BooleanOptionalAction, help='Log better-than-chance-per-parameter metrics')
+    logging_group.add_argument('--log_grad_norm', default=False, action=argparse.BooleanOptionalAction, help='Log gradient norm metrics')
+    logging_group.add_argument('--log_grad_std', default=False, action=argparse.BooleanOptionalAction, help='Log gradient std metrics')
+    logging_group.add_argument('--log_all_metrics', default=False, action=argparse.BooleanOptionalAction, help='Enable logging of all metrics including gns')
+
+    # Turn activation/weight statistics off to save CPU RAM and wall time.
+    training_group.add_argument(
+        '--compute_model_stats',
+        default=False,
+        action=argparse.BooleanOptionalAction,
+        help='If true (default) run compute_weight_stats / compute_activation_stats '
+             'every eval cycle.  Disable to eliminate the large host‑RAM spike that '
+             'occurs when those tensors are copied to CPU.'
+    )
+
+    training_group.add_argument(
+            '--model_stats_device',
+            default='gpu',
+            choices=['cpu', 'gpu'],
+            help="Where to aggregate weight / activation statistics. "
+            "'gpu' avoids host‑RAM spikes; 'cpu' saves VRAM."
+            )
+
     ## Export Model graph
     logging_group.add_argument('--export_model_graph', default=False, action=argparse.BooleanOptionalAction, help="exports tensorboard model of graph")
 
@@ -987,6 +1028,14 @@ def parse_args():
     logging_group.add_argument('--print_model_info', default=True, action=argparse.BooleanOptionalAction)
 
     args = parser.parse_args()
+
+    if args.log_all_metrics:
+        args.log_btc_train = True
+        args.log_btc_per_param = True
+        args.log_grad_norm = True
+        args.log_grad_std = True
+        if args.gns_type is None:
+            args.gns_type = 'sogns'
 
     if args.load_config_json is not None:
         with open(args.load_config_json, 'r') as config_file:
