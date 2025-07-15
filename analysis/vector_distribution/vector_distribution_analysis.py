@@ -51,13 +51,9 @@ def get_values(num_format, exp_bits=None, mant_bits=None):
     if num_format == "int8":
         return np.arange(-128, 128, dtype=np.float64)
     if num_format == "e4m3":
-        exp_bits = exp_bits or 4
-        mant_bits = mant_bits or 3
-        return float_subset_values(exp_bits, mant_bits)
+        return float_subset_values(4, 3)
     if num_format == "e5m2":
-        exp_bits = exp_bits or 5
-        mant_bits = mant_bits or 2
-        return float_subset_values(exp_bits, mant_bits)
+        return float_subset_values(5, 2)
     if num_format == "fp16":
         exp_bits = exp_bits or 5
         mant_bits = mant_bits or 10
@@ -365,6 +361,46 @@ def plot_heatmap_3d(H, t_edges, p_edges, out_path, projection="equal-area", log_
         plt.savefig(out_path)
 
 
+def plot_scatter_3d(vectors, out_html, title="3D Scatter Plot of Vectors"):
+    """Generate an interactive 3D scatter plot of vectors."""
+    from plotly.io import write_html
+
+    if not isinstance(vectors, np.ndarray):
+        vectors = np.array(vectors)
+    
+    if vectors.ndim == 1:
+        vectors = vectors.reshape(1, -1)
+
+    if vectors.shape[0] == 0:
+        print("No vectors to plot.")
+        return
+
+    x, y, z = vectors.T
+
+    fig = go.Figure(data=[go.Scatter3d(
+        x=x, y=y, z=z,
+        mode='markers',
+        marker=dict(
+            size=2,
+            opacity=0.6,
+        )
+    )])
+
+    fig.update_layout(
+        title=title,
+        scene=dict(
+            xaxis_title='X',
+            yaxis_title='Y',
+            zaxis_title='Z',
+            aspectmode='data'
+        ),
+        margin=dict(l=0, r=0, b=0, t=40)
+    )
+    
+    write_html(fig, out_html)
+    print(f"Saved 3D scatter plot to {out_html}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Vector distribution analysis")
     parser.add_argument('--format', choices=['int3', 'int4', 'int5', 'int6', 'int7', 'int8', 'e4m3', 'e5m2', 'fp16'], required=True)
@@ -387,6 +423,10 @@ if __name__ == "__main__":
     parser.add_argument('--out3d', default=None,
                         help='optional 3D heatmap output path. Use a .html '
                              'extension for an interactive figure')
+    parser.add_argument('--points_3d', action='store_true',
+                        help='Plot vectors as 3D points instead of a spherical projection.')
+    parser.add_argument('--points_3d_normalize', action=argparse.BooleanOptionalAction, default=False,
+                        help='Used with --points_3d. If passed, normalizes vectors before plotting.')
     parser.add_argument('--projection', choices=['equal-area', 'angular'],
                         default='equal-area',
                         help='heatmap projection / tiling scheme')
@@ -406,8 +446,11 @@ if __name__ == "__main__":
 
     values = get_values(args.format, exp_bits=args.exp_bits, mant_bits=args.mant_bits)
     
-    # Do not normalize vectors if we are binning by norm
-    normalize_vectors = not (args.num_norm_bins and args.healpix)
+    if args.points_3d:
+        normalize_vectors = args.points_3d_normalize
+    else:
+        # Do not normalize vectors if we are binning by norm
+        normalize_vectors = not (args.num_norm_bins and args.healpix)
 
     vector_generator = generate_vectors(
         values,
@@ -421,9 +464,13 @@ if __name__ == "__main__":
     )
     vectors = list(vector_generator)
 
-    if args.healpix:
+    if args.points_3d:
+        # The user wants a 3D scatter plot. This is the primary output.
+        outfile = args.out3d or f"points_3d_{args.format}.html"
+        plot_scatter_3d(vectors, outfile, title=f"3D Point Distribution for {args.format}")
+    elif args.healpix:
+        # The user wants a HEALPix plot.
         if args.num_norm_bins:
-            # Norm-binned analysis
             histograms, norm_bin_edges = bin_vectors_by_norm_healpix(vectors, args.nside, args.num_norm_bins)
             plot_healpix_distribution(
                 histograms,
@@ -434,7 +481,6 @@ if __name__ == "__main__":
                 title=f"Vector Density (Norm-Binned) for {args.format}"
             )
         else:
-            # Standard single healpix plot
             hist = bin_vectors_healpix(vectors, args.nside)
             plot_healpix_distribution(
                 hist,
@@ -444,10 +490,12 @@ if __name__ == "__main__":
                 title=f"Vector Density for {args.format}"
             )
     else:
-        # Non-healpix path (remains unchanged, works on unit vectors)
+        # Default case: 2D heatmap.
         H, t_edges, p_edges = bin_vectors(vectors, bins=args.bins, projection=args.projection)
         plot_heatmap(H, t_edges, p_edges, args.out, projection=args.projection, log_scale=args.log)
         print(f"Saved heatmap to {args.out}")
+
+        # And an optional 3D heatmap plot.
         if args.out3d:
             plot_heatmap_3d(H, t_edges, p_edges, args.out3d, projection=args.projection, log_scale=args.log)
             print(f"Saved 3D heatmap to {args.out3d}")
