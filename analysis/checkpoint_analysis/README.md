@@ -60,3 +60,13 @@ python checkpoint_analysis/checkpoint_explorer.py out/ckpt.pt --device cuda
 - Ensure the script is run from the **main repository directory**.
 - Verify that the checkpoint file exists at the specified path.
 - Check for dependencies like PyTorch before running the script.
+
+## JL Transforming a Checkpoint
+
+The script `jl_transform_ckpt.py` applies a Johnson-Lindenstrauss transform to
+every weight tensor in a checkpoint. The transformed checkpoint and the original
+`meta.pkl` are written to a new directory.
+
+```bash
+python checkpoint_analysis/jl_transform_ckpt.py out --out_dir out_jl
+```
