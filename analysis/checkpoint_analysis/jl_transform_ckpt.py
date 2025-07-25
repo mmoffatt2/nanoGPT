@@ -38,6 +38,11 @@ def parse_args():
         default="sign",
         help="Type of JL transform: 'sign' (default), 'gaussian', 'sparse' (Achlioptas), or 'srht'",
     )
+    parser.add_argument(
+        "--cproj_vertical",
+        action="store_true",
+        help="Apply JL projection along the first dimension for tensors named 'c_proj.weight'",
+    )
     return parser.parse_args()
 
 
@@ -49,11 +54,26 @@ def sign_matrix(out_dim: int, in_dim: int, generator: torch.Generator, device) -
     return mat
 
 
-def jl_project_tensor(tensor: torch.Tensor, proj: torch.Tensor) -> torch.Tensor:
-    """Project `tensor` along dimensions matching ``proj.shape[1]``."""
+def jl_project_tensor(
+    tensor: torch.Tensor, proj: torch.Tensor, vertical_only: bool = False
+) -> torch.Tensor:
+    """Project ``tensor`` using ``proj``.
+
+    If ``vertical_only`` is True, the projection is applied only along the first
+    dimension when that dimension matches ``proj.shape[1]``. Otherwise the
+    projection rules mirror the default behaviour which projects any matching
+    input or output embedding dimension.
+    """
     in_dim = proj.shape[1]
 
     if tensor.ndim == 0:
+        return tensor
+
+    if vertical_only:
+        if tensor.ndim > 1 and tensor.shape[0] == in_dim:
+            return proj @ tensor
+        if tensor.ndim == 1 and tensor.shape[0] == in_dim:
+            return (proj @ tensor.unsqueeze(-1)).squeeze(-1)
         return tensor
 
     # square matrices that map n_embd->n_embd
@@ -127,7 +147,8 @@ def main():
         if key.endswith("mlp.c_fc.weight") and tensor.ndim == 2:
             mlp_sizes.append(tensor.shape[0])
 
-        state_dict[key] = jl_project_tensor(tensor, proj)
+        vertical = args.cproj_vertical and key.endswith("c_proj.weight")
+        state_dict[key] = jl_project_tensor(tensor, proj, vertical_only=vertical)
 
     if "model_args" in checkpoint:
         checkpoint["model_args"]["n_embd"] = args.out_embd

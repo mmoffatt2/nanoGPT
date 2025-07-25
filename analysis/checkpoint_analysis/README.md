@@ -68,6 +68,8 @@ every weight tensor in a checkpoint. It can also change the model’s embedding
 dimension while keeping the MLP sizes intact. The transformed checkpoint and the
 original `meta.pkl` are written to a new directory. Use `--jl_type` to select the
 kind of JL transform (e.g. `sign`, `gaussian`, `sparse`, or `srht`).
+The optional `--cproj_vertical` flag projects any `c_proj.weight` tensors along
+their first dimension instead of the default behaviour.
 
 ```bash
 python checkpoint_analysis/jl_transform_ckpt.py out \
