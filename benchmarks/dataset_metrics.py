@@ -9,17 +9,28 @@ def _strip_ansi(text: str) -> str:
     """Remove ANSI color codes from text."""
     return ANSI_ESCAPE.sub("", text)
 
-try:
-    from spellchecker import SpellChecker
-    spell = SpellChecker()
-except Exception:
-    SpellChecker = None
-    spell = None
+
+def _load_spellchecker():
+    """Attempt to load pyspellchecker and return an instance or None."""
+    global SpellChecker, spell
+    if spell is not None:
+        return spell
+    try:
+        from spellchecker import SpellChecker as _SC
+        SpellChecker = _SC
+        spell = SpellChecker()
+    except Exception:
+        SpellChecker = None
+        spell = None
+    return spell
+
+spell = None
+SpellChecker = None
 
 
 def spelling_correctness(text: str) -> float:
     """Return the fraction of correctly spelled English words."""
-    if spell is None:
+    if _load_spellchecker() is None:
         return 0.0
     clean = _strip_ansi(text)
     words = re.findall(r"[A-Za-z']+", clean.lower())

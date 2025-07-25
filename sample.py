@@ -620,7 +620,9 @@ def sample_with_existing_model(
 
             metrics = run_all(plain_text)
             metric_str = ", ".join(f"{k}={v:.3f}" for k, v in metrics.items())
-            console.print(f"[bold magenta]Metrics:[/bold magenta] {metric_str}")
+            console.print(
+                f"\n[bold magenta]Metrics ({k_tag}, sample {sample_idx+1}):[/bold magenta] {metric_str}"
+            )
 
             # ---------- colourised outputs ----------------------------------
             if colorize_output:
