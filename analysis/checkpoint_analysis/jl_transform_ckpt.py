@@ -35,8 +35,8 @@ def parse_args():
     parser.add_argument(
         "--jl_type",
         choices=["sign", "gaussian", "sparse", "srht"],
-        default="sign",
-        help="Type of JL transform: 'sign' (default), 'gaussian', 'sparse' (Achlioptas), or 'srht'",
+        default="gaussian",
+        help="Type of JL transform: 'sign', 'gaussian', 'sparse' (Achlioptas), or 'srht'",
     )
     parser.add_argument(
         "--gaussian_mean",
