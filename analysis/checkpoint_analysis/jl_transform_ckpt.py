@@ -136,7 +136,7 @@ def main():
 
 
     if args.jl_type == "gaussian":
-        proj = torch.empty(args.out_embd, old_embd, generator=g, device="cpu")
+        proj = torch.empty((args.out_embd, old_embd), generator=g, device="cpu")
         proj.normal_(mean=args.gaussian_mean, std=args.gaussian_std)
         proj /= math.sqrt(args.out_embd)
     elif args.jl_type == "sparse":
