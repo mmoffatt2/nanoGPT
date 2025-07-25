@@ -414,6 +414,7 @@ def sample_with_existing_model(
     iter_num: Optional[int] = None,
     best_val_loss: Optional[float] = None,
     run_name: Optional[str] = None,
+    writer: Optional[object] = None,
 ):
     """
     Generate text from an already-loaded GPT model.
@@ -426,6 +427,8 @@ def sample_with_existing_model(
         • list  – run once per k in the list (duplicates filtered).
     colorize_mode :
         "minmax" | "softmax" | "softmax_top_k" | "dot_product" | **"rank"** | "all"
+    writer : torch.utils.tensorboard.SummaryWriter | None
+        When provided, dataset metrics for each top-k sample will be logged to TensorBoard.
     """
 
     console = Console()
@@ -624,6 +627,9 @@ def sample_with_existing_model(
                 console.print(
                     f"\n[bold magenta]Metrics ({k_tag}, sample {sample_idx+1}):[/bold magenta] {metric_str}"
                 )
+                if writer is not None and getattr(args, "tensorboard_log", False):
+                    for mk, mv in metrics.items():
+                        writer.add_scalar(f"sample_metrics/{k_tag}/{mk}", mv, iter_num or 0)
 
             # ---------- colourised outputs ----------------------------------
             if colorize_output:

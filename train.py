@@ -498,6 +498,7 @@ class Trainer:
                     best_val_loss=self.best_val_loss,
                     run_name=self.args.tensorboard_run_name,
                     args=self.args,
+                    writer=self.writer if self.args.tensorboard_log else None,
                 )
 
         # After sampling from the model, optionally run simple dataset benchmarks
@@ -555,8 +556,6 @@ class Trainer:
             print("Dataset sample metrics:")
             for k, v in metrics.items():
                 print(f"  {k}: {v:.3f}")
-                if self.args.tensorboard_log:
-                    self.writer.add_scalar(f"dataset_benchmarks/{k}", v, self.iter_num)
         except Exception as e:
             print(f"Error running dataset benchmarks: {e}")
 
