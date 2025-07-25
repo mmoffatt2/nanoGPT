@@ -33,9 +33,10 @@ def parse_args():
         help="Random seed for the JL transform",
     )
     parser.add_argument(
-        "--wte_only",
-        action="store_true",
-        help="Only apply the JL transform to transformer.wte.weight",
+        "--jl_type",
+        choices=["sign", "gaussian", "sparse", "srht"],
+        default="sign",
+        help="Type of JL transform: 'sign' (default), 'gaussian', 'sparse' (Achlioptas), or 'srht'",
     )
     return parser.parse_args()
 
@@ -82,47 +83,56 @@ def main():
     g.manual_seed(args.seed)
 
     # Determine the embedding dimension to transform
-    if args.wte_only:
-        wte_key = next((k for k in state_dict if k.endswith("wte.weight")), None)
-        if wte_key is None:
-            raise ValueError("Could not find wte.weight in checkpoint")
-        old_embd = state_dict[wte_key].shape[1]
+    old_embd = checkpoint.get("model_args", {}).get("n_embd")
+    if old_embd is None:
+        raise ValueError("Could not determine n_embd from checkpoint")
+
+    n_head = checkpoint.get("model_args", {}).get("n_head")
+    if n_head is not None:
+        old_head_dim = old_embd // n_head
+        new_head_dim = args.out_embd // n_head
+        if new_head_dim != old_head_dim:
+            raise ValueError(
+                "out_embd would change per-head dimension; choose a value that keeps n_embd//n_head constant"
+            )
+
+    if args.jl_type == "gaussian":
+        proj = torch.randn(args.out_embd, old_embd, generator=g, device="cpu") / math.sqrt(args.out_embd)
+    elif args.jl_type == "sparse":
+        rand = torch.rand(args.out_embd, old_embd, generator=g, device="cpu")
+        proj = torch.zeros_like(rand)
+        proj[rand < 1/6] = 1
+        proj[(rand >= 1/6) & (rand < 2/6)] = -1
+        proj *= math.sqrt(3.0 / args.out_embd)
+    elif args.jl_type == "srht":
+        if (old_embd & (old_embd - 1)) != 0:
+            raise ValueError("srht JL requires n_embd to be a power of two")
+        def hadamard(n):
+            H = torch.tensor([[1.0]], device="cpu")
+            size = 1
+            while size < n:
+                H = torch.cat([torch.cat([H, H], dim=1), torch.cat([H, -H], dim=1)], dim=0)
+                size *= 2
+            return H
+        D = torch.randint(0, 2, (old_embd,), generator=g, device="cpu", dtype=torch.float32) * 2 - 1
+        H = hadamard(old_embd)
+        idx = torch.randperm(old_embd, generator=g)[: args.out_embd]
+        proj = H[idx] * D
+        proj /= math.sqrt(args.out_embd)
     else:
-        old_embd = checkpoint.get("model_args", {}).get("n_embd")
-        if old_embd is None:
-            raise ValueError("Could not determine n_embd from checkpoint")
-
-    if not args.wte_only:
-        n_head = checkpoint.get("model_args", {}).get("n_head")
-        if n_head is not None:
-            old_head_dim = old_embd // n_head
-            new_head_dim = args.out_embd // n_head
-            if new_head_dim != old_head_dim:
-                raise ValueError(
-                    "out_embd would change per-head dimension; choose a value that keeps n_embd//n_head constant"
-                )
-
-    proj = sign_matrix(args.out_embd, old_embd, g, device="cpu")
+        proj = sign_matrix(args.out_embd, old_embd, g, device="cpu")
 
     for key, tensor in list(state_dict.items()):
         if not torch.is_floating_point(tensor):
             continue
-        if args.wte_only and not key.endswith("wte.weight"):
-            continue
         state_dict[key] = jl_project_tensor(tensor, proj)
 
     if "model_args" in checkpoint:
-        if args.wte_only:
+        checkpoint["model_args"]["n_embd"] = args.out_embd
+        if "n_embd_wte" in checkpoint["model_args"] and checkpoint["model_args"]["n_embd_wte"] == old_embd:
             checkpoint["model_args"]["n_embd_wte"] = args.out_embd
-        else:
-            checkpoint["model_args"]["n_embd"] = args.out_embd
-            if "n_embd_wte" in checkpoint["model_args"] and checkpoint["model_args"]["n_embd_wte"] == old_embd:
-                checkpoint["model_args"]["n_embd_wte"] = args.out_embd
-    if "config" in checkpoint:
-        if args.wte_only:
-            checkpoint["config"]["n_embd_wte"] = args.out_embd
-        elif "n_embd" in checkpoint["config"]:
-            checkpoint["config"]["n_embd"] = args.out_embd
+    if "config" in checkpoint and "n_embd" in checkpoint["config"]:
+        checkpoint["config"]["n_embd"] = args.out_embd
 
     out_dir = args.out_dir or f"{args.ckpt_dir.rstrip('/').rstrip(os.sep)}_jl"
     os.makedirs(out_dir, exist_ok=True)

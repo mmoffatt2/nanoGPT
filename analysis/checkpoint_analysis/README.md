@@ -66,12 +66,12 @@ python checkpoint_analysis/checkpoint_explorer.py out/ckpt.pt --device cuda
 The script `jl_transform_ckpt.py` applies a Johnson-Lindenstrauss transform to
 every weight tensor in a checkpoint. It also allows changing the model's
 embedding dimension. The transformed checkpoint and the original `meta.pkl` are
-written to a new directory. Use `--wte_only` to only transform the `wte`
-embedding matrix.
+written to a new directory. Use `--jl_type` to select the kind of JL transform
+(e.g. `sign`, `gaussian`, `sparse`, or `srht`).
 
 ```bash
 python checkpoint_analysis/jl_transform_ckpt.py out \
-    --out_dir out_jl --out_embd <new_dim>
+    --out_dir out_jl --out_embd <new_dim> --jl_type sign
 ```
 
 The new embedding dimension must keep the per-head dimension constant, i.e.
