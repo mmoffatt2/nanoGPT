@@ -200,6 +200,11 @@ def main():
             if len(set(mlp_sizes)) > 1:
                 checkpoint["config"]["mlp_size_layerlist"] = mlp_sizes
 
+    # reset training progress so fine-tuning starts fresh
+    checkpoint["iter_num"] = 0
+    checkpoint["best_val_loss"] = 1e9
+    checkpoint["best_iter"] = 0
+
     out_dir = args.out_dir or f"{args.ckpt_dir.rstrip('/').rstrip(os.sep)}_jl"
     os.makedirs(out_dir, exist_ok=True)
 

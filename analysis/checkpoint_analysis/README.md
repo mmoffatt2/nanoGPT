@@ -73,6 +73,8 @@ When using the `gaussian` type you may set `--gaussian_mean` and
 `--gaussian_std` to control the distribution of the projection matrix.  The
 optional `--cproj_vertical` flag projects any `c_proj.weight` tensors along their
 first dimension instead of the default behaviour.
+The script also resets `best_val_loss` and `best_iter` in the new checkpoint so
+training restarts from scratch after transformation.
 
 ```bash
 python checkpoint_analysis/jl_transform_ckpt.py out \
