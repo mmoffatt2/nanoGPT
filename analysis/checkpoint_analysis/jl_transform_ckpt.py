@@ -53,12 +53,15 @@ def jl_project_tensor(tensor: torch.Tensor, proj: torch.Tensor) -> torch.Tensor:
     """Project `tensor` along dimensions matching ``proj.shape[1]``."""
     in_dim = proj.shape[1]
 
+    if tensor.ndim == 0:
+        return tensor
+
     # square matrices that map n_embd->n_embd
     if tensor.ndim == 2 and tensor.shape[0] == in_dim and tensor.shape[1] == in_dim:
         return proj @ tensor @ proj.t()
 
     # last dimension corresponds to embeddings (e.g. Linear weight or embedding table)
-    if tensor.shape[-1] == in_dim:
+    if tensor.ndim >= 1 and tensor.shape[-1] == in_dim:
         tensor = tensor @ proj.t()
 
     # first dimension could also be embeddings (1D bias or weight matrices where out_features == n_embd)
@@ -87,14 +90,6 @@ def main():
     if old_embd is None:
         raise ValueError("Could not determine n_embd from checkpoint")
 
-    n_head = checkpoint.get("model_args", {}).get("n_head")
-    if n_head is not None:
-        old_head_dim = old_embd // n_head
-        new_head_dim = args.out_embd // n_head
-        if new_head_dim != old_head_dim:
-            raise ValueError(
-                "out_embd would change per-head dimension; choose a value that keeps n_embd//n_head constant"
-            )
 
     if args.jl_type == "gaussian":
         proj = torch.randn(args.out_embd, old_embd, generator=g, device="cpu") / math.sqrt(args.out_embd)

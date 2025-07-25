@@ -74,6 +74,3 @@ python checkpoint_analysis/jl_transform_ckpt.py out \
     --out_dir out_jl --out_embd <new_dim> --jl_type sign
 ```
 
-The new embedding dimension must keep the per-head dimension constant, i.e.
-`new_dim // n_head` must equal the original `n_embd // n_head` from the
-checkpoint.
