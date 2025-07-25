@@ -41,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "--cproj_vertical",
         action="store_true",
-        help="Apply JL projection along the first dimension for tensors named 'c_proj.weight'",
+        help="Project c_proj weights along the out_features dimension instead of the in_features dimension",
     )
     return parser.parse_args()
 
@@ -59,10 +59,11 @@ def jl_project_tensor(
 ) -> torch.Tensor:
     """Project ``tensor`` using ``proj``.
 
-    If ``vertical_only`` is True, the projection is applied only along the first
-    dimension when that dimension matches ``proj.shape[1]``. Otherwise the
-    projection rules mirror the default behaviour which projects any matching
-    input or output embedding dimension.
+    If ``vertical_only`` is True the projection is applied along the first
+    dimension only (useful for ``c_proj`` weights when projecting the
+    out_features).  Otherwise the last dimension and, when appropriate, the first
+    dimension are projected so that tensors mapping the residual dimension to
+    itself are resized correctly.
     """
     in_dim = proj.shape[1]
 
@@ -76,15 +77,9 @@ def jl_project_tensor(
             return (proj @ tensor.unsqueeze(-1)).squeeze(-1)
         return tensor
 
-    # square matrices that map n_embd->n_embd
-    if tensor.ndim == 2 and tensor.shape[0] == in_dim and tensor.shape[1] == in_dim:
-        return proj @ tensor @ proj.t()
-
-    # last dimension corresponds to embeddings (e.g. Linear weight or embedding table)
     if tensor.ndim >= 1 and tensor.shape[-1] == in_dim:
         tensor = tensor @ proj.t()
 
-    # first dimension could also be embeddings (1D bias or weight matrices where out_features == n_embd)
     if tensor.ndim > 1 and tensor.shape[0] == in_dim:
         tensor = proj @ tensor
     elif tensor.ndim == 1 and tensor.shape[0] == in_dim:
@@ -107,8 +102,20 @@ def main():
 
     # Determine the embedding dimension to transform
     old_embd = checkpoint.get("model_args", {}).get("n_embd")
+    if old_embd is None and "config" in checkpoint:
+        old_embd = checkpoint["config"].get("n_embd")
     if old_embd is None:
         raise ValueError("Could not determine n_embd from checkpoint")
+
+    config = checkpoint.get("config", {})
+    n_head = config.get("n_head")
+    old_qk_dim = config.get("n_qk_head_dim")
+    old_v_dim = config.get("n_v_head_dim")
+    if n_head is not None:
+        if old_qk_dim is None:
+            old_qk_dim = old_embd // n_head
+        if old_v_dim is None:
+            old_v_dim = old_embd // n_head
 
 
     if args.jl_type == "gaussian":
@@ -154,6 +161,10 @@ def main():
         checkpoint["model_args"]["n_embd"] = args.out_embd
         if "n_embd_wte" in checkpoint["model_args"] and checkpoint["model_args"]["n_embd_wte"] == old_embd:
             checkpoint["model_args"]["n_embd_wte"] = args.out_embd
+        if old_qk_dim is not None:
+            checkpoint["model_args"]["n_qk_head_dim"] = old_qk_dim
+        if old_v_dim is not None:
+            checkpoint["model_args"]["n_v_head_dim"] = old_v_dim
         if mlp_sizes:
             checkpoint["model_args"]["mlp_size"] = mlp_sizes[0] if len(set(mlp_sizes)) == 1 else None
             if len(set(mlp_sizes)) > 1:
@@ -161,6 +172,10 @@ def main():
 
     if "config" in checkpoint:
         checkpoint["config"]["n_embd"] = args.out_embd
+        if old_qk_dim is not None:
+            checkpoint["config"]["n_qk_head_dim"] = old_qk_dim
+        if old_v_dim is not None:
+            checkpoint["config"]["n_v_head_dim"] = old_v_dim
         if mlp_sizes:
             checkpoint["config"]["mlp_size"] = mlp_sizes[0] if len(set(mlp_sizes)) == 1 else None
             if len(set(mlp_sizes)) > 1:
