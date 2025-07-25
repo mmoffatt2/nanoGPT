@@ -27,10 +27,12 @@ def _load_spellchecker():
         SpellChecker = None
         spell = None
         if not _warned_spellchecker_missing:
-            warnings.warn(
-                "pyspellchecker not installed; spelling correctness will be 0.0",
-                RuntimeWarning,
+            msg = (
+                "pyspellchecker not installed; spelling correctness will be 0.0. "
+                "Install with `pip install pyspellchecker` to enable this metric."
             )
+            warnings.warn(msg, RuntimeWarning)
+            print(msg)
             _warned_spellchecker_missing = True
     return spell
 
