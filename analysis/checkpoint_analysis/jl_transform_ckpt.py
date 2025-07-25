@@ -44,24 +44,23 @@ def sign_matrix(out_dim: int, in_dim: int, generator: torch.Generator, device) -
 
 
 def jl_project_tensor(tensor: torch.Tensor, proj: torch.Tensor) -> torch.Tensor:
-    """Apply JL projection along all dimensions equal to proj.shape[1]."""
+    """Project `tensor` along dimensions matching ``proj.shape[1]``."""
     in_dim = proj.shape[1]
-    out_dim = proj.shape[0]
 
-    for axis, size in list(enumerate(tensor.shape)):
-        if size == in_dim:
-            tensor = torch.tensordot(tensor, proj.t(), dims=([axis], [0]))
-            perm = list(range(tensor.ndim))
-            perm.insert(axis, perm.pop(-1))
-            tensor = tensor.permute(*perm)
-        elif size % in_dim == 0 and size // in_dim > 1:
-            groups = size // in_dim
-            tensor = tensor.movedim(axis, -1)
-            orig_shape = tensor.shape[:-1]
-            tensor = tensor.reshape(*orig_shape, groups, in_dim)
-            tensor = torch.tensordot(tensor, proj.t(), dims=([-1], [0]))
-            tensor = tensor.reshape(*orig_shape, groups * out_dim)
-            tensor = tensor.movedim(-1, axis)
+    # square matrices that map n_embd->n_embd
+    if tensor.ndim == 2 and tensor.shape[0] == in_dim and tensor.shape[1] == in_dim:
+        return proj @ tensor @ proj.t()
+
+    # last dimension corresponds to embeddings (e.g. Linear weight or embedding table)
+    if tensor.shape[-1] == in_dim:
+        tensor = tensor @ proj.t()
+
+    # first dimension could also be embeddings (1D bias or weight matrices where out_features == n_embd)
+    if tensor.ndim > 1 and tensor.shape[0] == in_dim:
+        tensor = proj @ tensor
+    elif tensor.ndim == 1 and tensor.shape[0] == in_dim:
+        tensor = (proj @ tensor.unsqueeze(-1)).squeeze(-1)
+
     return tensor
 
 
@@ -80,6 +79,15 @@ def main():
     old_embd = checkpoint.get("model_args", {}).get("n_embd")
     if old_embd is None:
         raise ValueError("Could not determine n_embd from checkpoint")
+
+    n_head = checkpoint.get("model_args", {}).get("n_head")
+    if n_head is not None:
+        old_head_dim = old_embd // n_head
+        new_head_dim = args.out_embd // n_head
+        if new_head_dim != old_head_dim:
+            raise ValueError(
+                "out_embd would change per-head dimension; choose a value that keeps n_embd//n_head constant"
+            )
 
     proj = sign_matrix(args.out_embd, old_embd, g, device="cpu")
 
