@@ -618,11 +618,12 @@ def sample_with_existing_model(
             if token_boundary is not None:
                 plain_text = plain_text.replace(token_boundary, " ")
 
-            metrics = run_all(plain_text)
-            metric_str = ", ".join(f"{k}={v:.3f}" for k, v in metrics.items())
-            console.print(
-                f"\n[bold magenta]Metrics ({k_tag}, sample {sample_idx+1}):[/bold magenta] {metric_str}"
-            )
+            if args and getattr(args, "sample_metrics", False):
+                metrics = run_all(plain_text)
+                metric_str = ", ".join(f"{k}={v:.3f}" for k, v in metrics.items())
+                console.print(
+                    f"\n[bold magenta]Metrics ({k_tag}, sample {sample_idx+1}):[/bold magenta] {metric_str}"
+                )
 
             # ---------- colourised outputs ----------------------------------
             if colorize_output:
