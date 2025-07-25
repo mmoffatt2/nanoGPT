@@ -117,17 +117,33 @@ def main():
     else:
         proj = sign_matrix(args.out_embd, old_embd, g, device="cpu")
 
+    # gather mlp expansion sizes so we can preserve them regardless of new n_embd
+    mlp_sizes = []
+
     for key, tensor in list(state_dict.items()):
         if not torch.is_floating_point(tensor):
             continue
+
+        if key.endswith("mlp.c_fc.weight") and tensor.ndim == 2:
+            mlp_sizes.append(tensor.shape[0])
+
         state_dict[key] = jl_project_tensor(tensor, proj)
 
     if "model_args" in checkpoint:
         checkpoint["model_args"]["n_embd"] = args.out_embd
         if "n_embd_wte" in checkpoint["model_args"] and checkpoint["model_args"]["n_embd_wte"] == old_embd:
             checkpoint["model_args"]["n_embd_wte"] = args.out_embd
-    if "config" in checkpoint and "n_embd" in checkpoint["config"]:
+        if mlp_sizes:
+            checkpoint["model_args"]["mlp_size"] = mlp_sizes[0] if len(set(mlp_sizes)) == 1 else None
+            if len(set(mlp_sizes)) > 1:
+                checkpoint["model_args"]["mlp_size_layerlist"] = mlp_sizes
+
+    if "config" in checkpoint:
         checkpoint["config"]["n_embd"] = args.out_embd
+        if mlp_sizes:
+            checkpoint["config"]["mlp_size"] = mlp_sizes[0] if len(set(mlp_sizes)) == 1 else None
+            if len(set(mlp_sizes)) > 1:
+                checkpoint["config"]["mlp_size_layerlist"] = mlp_sizes
 
     out_dir = args.out_dir or f"{args.ckpt_dir.rstrip('/').rstrip(os.sep)}_jl"
     os.makedirs(out_dir, exist_ok=True)
