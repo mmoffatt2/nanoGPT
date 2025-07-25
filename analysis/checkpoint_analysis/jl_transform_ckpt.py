@@ -97,6 +97,11 @@ def main():
     checkpoint = torch.load(ckpt_path, map_location="cpu")
     state_dict = checkpoint.get("model", checkpoint)
 
+    # optimizer and scheduler states depend on parameter shapes.
+    # They will be invalid after changing the embedding dimension, so drop them.
+    checkpoint.pop("optimizer", None)
+    checkpoint.pop("scheduler", None)
+
     g = torch.Generator()
     g.manual_seed(args.seed)
 
