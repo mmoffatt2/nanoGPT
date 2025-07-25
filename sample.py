@@ -29,6 +29,7 @@ from variations.model_variations import model_variation_dictionary
 
 import lm_eval
 from benchmarks.gpt_lm_eval_wrapper import NanoGPTLM
+from benchmarks import run_all
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference from trained models")
@@ -616,6 +617,10 @@ def sample_with_existing_model(
             plain_text = decode(x[0].tolist())
             if token_boundary is not None:
                 plain_text = plain_text.replace(token_boundary, " ")
+
+            metrics = run_all(plain_text)
+            metric_str = ", ".join(f"{k}={v:.3f}" for k, v in metrics.items())
+            console.print(f"[bold magenta]Metrics:[/bold magenta] {metric_str}")
 
             # ---------- colourised outputs ----------------------------------
             if colorize_output:
