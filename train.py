@@ -500,6 +500,10 @@ class Trainer:
                     args=self.args,
                 )
 
+        # After sampling from the model, also run simple dataset benchmarks
+        if self.args.max_sample_tokens:
+            self.run_dataset_benchmarks()
+
         self.model.train()
 
     def get_vocab_size_from_meta(self):
@@ -528,6 +532,31 @@ class Trainer:
             print(f"File {src_file} copied to {dest_dir}")
         except Exception as e:
             print(f"Error copying file: {e}")
+
+    def run_dataset_benchmarks(self):
+        """Sample a chunk of dataset text and print simple metrics."""
+        try:
+            if hasattr(self, "train_data"):
+                data = self.train_data
+            elif hasattr(self, "train_data_dict") and self.args.dataset_list:
+                data = self.train_data_dict[self.args.dataset_list[0]]
+            else:
+                return
+
+            if len(data) < self.args.max_sample_tokens:
+                return
+
+            start = random.randint(0, len(data) - self.args.max_sample_tokens)
+            ids = data[start : start + self.args.max_sample_tokens].astype(int)
+            text = self.decode(ids.tolist())
+            from benchmarks import run_all
+
+            metrics = run_all(text)
+            print("Dataset sample metrics:")
+            for k, v in metrics.items():
+                print(f"  {k}: {v:.3f}")
+        except Exception as e:
+            print(f"Error running dataset benchmarks: {e}")
 
     def load_data(self):
 
