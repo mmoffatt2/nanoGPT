@@ -1,4 +1,5 @@
 import re
+import warnings
 from typing import Dict
 
 # Regex pattern to remove ANSI escape codes used for colorization
@@ -10,9 +11,12 @@ def _strip_ansi(text: str) -> str:
     return ANSI_ESCAPE.sub("", text)
 
 
+_warned_spellchecker_missing = False
+
+
 def _load_spellchecker():
     """Attempt to load pyspellchecker and return an instance or None."""
-    global SpellChecker, spell
+    global SpellChecker, spell, _warned_spellchecker_missing
     if spell is not None:
         return spell
     try:
@@ -22,6 +26,12 @@ def _load_spellchecker():
     except Exception:
         SpellChecker = None
         spell = None
+        if not _warned_spellchecker_missing:
+            warnings.warn(
+                "pyspellchecker not installed; spelling correctness will be 0.0",
+                RuntimeWarning,
+            )
+            _warned_spellchecker_missing = True
     return spell
 
 spell = None
