@@ -500,8 +500,8 @@ class Trainer:
                     args=self.args,
                 )
 
-        # After sampling from the model, also run simple dataset benchmarks
-        if self.args.max_sample_tokens:
+        # After sampling from the model, optionally run simple dataset benchmarks
+        if self.args.dataset_benchmarks and self.args.max_sample_tokens:
             self.run_dataset_benchmarks()
 
         self.model.train()
@@ -555,6 +555,8 @@ class Trainer:
             print("Dataset sample metrics:")
             for k, v in metrics.items():
                 print(f"  {k}: {v:.3f}")
+                if self.args.tensorboard_log:
+                    self.writer.add_scalar(f"dataset_benchmarks/{k}", v, self.iter_num)
         except Exception as e:
             print(f"Error running dataset benchmarks: {e}")
 
