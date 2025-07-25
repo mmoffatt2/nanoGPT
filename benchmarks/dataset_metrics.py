@@ -71,6 +71,38 @@ def lexical_diversity(text: str) -> float:
     return len(set(words)) / len(words)
 
 
+def correctly_spelled_char_total(text: str) -> int:
+    """Total characters of unique words that are spelled correctly."""
+    if _load_spellchecker() is None:
+        return 0
+    clean = _strip_ansi(text)
+    words = re.findall(r"[A-Za-z']+", clean.lower())
+    if not words:
+        return 0
+    unique_words = set(words)
+    misspelled = spell.unknown(unique_words)
+    correct_words = [w for w in unique_words if w not in misspelled]
+    return sum(len(w) for w in correct_words)
+
+
+def correctly_spelled_char_fraction(text: str) -> float:
+    """Fraction of total word characters that are from correctly spelled unique words."""
+    if _load_spellchecker() is None:
+        return 0.0
+    clean = _strip_ansi(text)
+    words = re.findall(r"[A-Za-z']+", clean.lower())
+    if not words:
+        return 0.0
+    total_chars = sum(len(w) for w in words)
+    if total_chars == 0:
+        return 0.0
+    unique_words = set(words)
+    misspelled = spell.unknown(unique_words)
+    correct_words = [w for w in unique_words if w not in misspelled]
+    correct_chars = sum(len(w) for w in correct_words)
+    return correct_chars / total_chars
+
+
 def run_all(text: str) -> Dict[str, float]:
     """Compute all dataset metrics on provided text."""
     clean = _strip_ansi(text)
@@ -78,4 +110,6 @@ def run_all(text: str) -> Dict[str, float]:
         "spelling_correctness": spelling_correctness(clean),
         "avg_sentence_length": average_sentence_length(clean),
         "lexical_diversity": lexical_diversity(clean),
+        "correct_char_fraction": correctly_spelled_char_fraction(clean),
+        "correct_char_total": correctly_spelled_char_total(clean),
     }
