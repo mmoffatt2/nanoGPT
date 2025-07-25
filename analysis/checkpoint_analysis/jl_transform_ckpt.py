@@ -32,6 +32,11 @@ def parse_args():
         default=1337,
         help="Random seed for the JL transform",
     )
+    parser.add_argument(
+        "--wte_only",
+        action="store_true",
+        help="Only apply the JL transform to transformer.wte.weight",
+    )
     return parser.parse_args()
 
 
@@ -76,34 +81,48 @@ def main():
     g = torch.Generator()
     g.manual_seed(args.seed)
 
-    old_embd = checkpoint.get("model_args", {}).get("n_embd")
-    if old_embd is None:
-        raise ValueError("Could not determine n_embd from checkpoint")
+    # Determine the embedding dimension to transform
+    if args.wte_only:
+        wte_key = next((k for k in state_dict if k.endswith("wte.weight")), None)
+        if wte_key is None:
+            raise ValueError("Could not find wte.weight in checkpoint")
+        old_embd = state_dict[wte_key].shape[1]
+    else:
+        old_embd = checkpoint.get("model_args", {}).get("n_embd")
+        if old_embd is None:
+            raise ValueError("Could not determine n_embd from checkpoint")
 
-    n_head = checkpoint.get("model_args", {}).get("n_head")
-    if n_head is not None:
-        old_head_dim = old_embd // n_head
-        new_head_dim = args.out_embd // n_head
-        if new_head_dim != old_head_dim:
-            raise ValueError(
-                "out_embd would change per-head dimension; choose a value that keeps n_embd//n_head constant"
-            )
+    if not args.wte_only:
+        n_head = checkpoint.get("model_args", {}).get("n_head")
+        if n_head is not None:
+            old_head_dim = old_embd // n_head
+            new_head_dim = args.out_embd // n_head
+            if new_head_dim != old_head_dim:
+                raise ValueError(
+                    "out_embd would change per-head dimension; choose a value that keeps n_embd//n_head constant"
+                )
 
     proj = sign_matrix(args.out_embd, old_embd, g, device="cpu")
 
     for key, tensor in list(state_dict.items()):
-        if torch.is_floating_point(tensor):
-            state_dict[key] = jl_project_tensor(tensor, proj)
+        if not torch.is_floating_point(tensor):
+            continue
+        if args.wte_only and not key.endswith("wte.weight"):
+            continue
+        state_dict[key] = jl_project_tensor(tensor, proj)
 
     if "model_args" in checkpoint:
-        checkpoint["model_args"]["n_embd"] = args.out_embd
-        if (
-            "n_embd_wte" in checkpoint["model_args"]
-            and checkpoint["model_args"]["n_embd_wte"] == old_embd
-        ):
+        if args.wte_only:
             checkpoint["model_args"]["n_embd_wte"] = args.out_embd
-    if "config" in checkpoint and "n_embd" in checkpoint["config"]:
-        checkpoint["config"]["n_embd"] = args.out_embd
+        else:
+            checkpoint["model_args"]["n_embd"] = args.out_embd
+            if "n_embd_wte" in checkpoint["model_args"] and checkpoint["model_args"]["n_embd_wte"] == old_embd:
+                checkpoint["model_args"]["n_embd_wte"] = args.out_embd
+    if "config" in checkpoint:
+        if args.wte_only:
+            checkpoint["config"]["n_embd_wte"] = args.out_embd
+        elif "n_embd" in checkpoint["config"]:
+            checkpoint["config"]["n_embd"] = args.out_embd
 
     out_dir = args.out_dir or f"{args.ckpt_dir.rstrip('/').rstrip(os.sep)}_jl"
     os.makedirs(out_dir, exist_ok=True)
