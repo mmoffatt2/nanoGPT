@@ -39,6 +39,18 @@ def parse_args():
         help="Type of JL transform: 'sign' (default), 'gaussian', 'sparse' (Achlioptas), or 'srht'",
     )
     parser.add_argument(
+        "--gaussian_mean",
+        type=float,
+        default=0.0,
+        help="Mean of the normal distribution for the gaussian JL transform",
+    )
+    parser.add_argument(
+        "--gaussian_std",
+        type=float,
+        default=1.0,
+        help="Standard deviation of the normal distribution for the gaussian JL transform",
+    )
+    parser.add_argument(
         "--cproj_vertical",
         action="store_true",
         help="Project c_proj weights along the out_features dimension instead of the in_features dimension",
@@ -124,7 +136,9 @@ def main():
 
 
     if args.jl_type == "gaussian":
-        proj = torch.randn(args.out_embd, old_embd, generator=g, device="cpu") / math.sqrt(args.out_embd)
+        proj = torch.empty(args.out_embd, old_embd, generator=g, device="cpu")
+        proj.normal_(mean=args.gaussian_mean, std=args.gaussian_std)
+        proj /= math.sqrt(args.out_embd)
     elif args.jl_type == "sparse":
         rand = torch.rand(args.out_embd, old_embd, generator=g, device="cpu")
         proj = torch.zeros_like(rand)

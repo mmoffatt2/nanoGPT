@@ -69,8 +69,10 @@ dimension while keeping attention head dimensions and MLP sizes intact. The tran
 original `meta.pkl` are written to a new directory. Optimizer and scheduler
 states are removed so training restarts cleanly. Use `--jl_type` to select the
 kind of JL transform (e.g. `sign`, `gaussian`, `sparse`, or `srht`).
-The optional `--cproj_vertical` flag projects any `c_proj.weight` tensors along
-their first dimension instead of the default behaviour.
+When using the `gaussian` type you may set `--gaussian_mean` and
+`--gaussian_std` to control the distribution of the projection matrix.  The
+optional `--cproj_vertical` flag projects any `c_proj.weight` tensors along their
+first dimension instead of the default behaviour.
 
 ```bash
 python checkpoint_analysis/jl_transform_ckpt.py out \
