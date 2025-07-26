@@ -38,8 +38,9 @@ def _moments(t: Tensor) -> Dict[str, float]:
 @torch.no_grad()
 def compute_weight_stats(model: torch.nn.Module, device: torch.device) -> Tuple[Dict[str, Dict], Dict[str, float]]:
     per_tensor: Dict[str, Dict] = {}
-    accum      = {k:0.0 for k in ["stdev","kurtosis","max","min","abs_max"]}
-    n          = 0
+    keys = ["stdev", "kurtosis", "max", "min", "abs_max"]
+    accum  = {k: 0.0 for k in keys}
+    counts = {k: 0 for k in keys}
 
     for name, p in model.named_parameters():
         if p.requires_grad:                       # skip buffers etc.
@@ -47,10 +48,13 @@ def compute_weight_stats(model: torch.nn.Module, device: torch.device) -> Tuple[
             s = _moments(t)
             per_tensor[name] = s
             for k in accum:                       # running mean over tensors
-                accum[k] += s[k]
-            n += 1
+                val = s[k]
+                if isinstance(val, float) and math.isnan(val):
+                    continue
+                accum[k] += val
+                counts[k] += 1
 
-    overall = {k: v/n for k,v in accum.items()}
+    overall = {k: (accum[k] / counts[k]) if counts[k] > 0 else float("nan") for k in accum}
     return per_tensor, overall
 
 @torch.no_grad()
@@ -69,21 +73,24 @@ def compute_activation_stats(
     Returns a dict keyed by module‑path and an overall average.
     """
     act_stats: Dict[str, Dict] = {}
-    overall   = {k: 0.0 for k in ["stdev", "kurtosis", "max", "min", "abs_max"]}
-    n         = 0
+    keys = ["stdev", "kurtosis", "max", "min", "abs_max"]
+    sums   = {k: 0.0 for k in keys}
+    counts = {k: 0 for k in keys}
 
     def make_hook(mod_name: str):
         def _hook(_module, _inp, out):
-            nonlocal n
             # Work with first tensor output if module returns tuple
             t = out[0] if isinstance(out, (tuple, list)) else out
             if not torch.is_tensor(t):
                 return                          # skip non‑tensor outputs
             s = _moments(t.detach().to(device))
             act_stats[mod_name] = s
-            for k in overall:
-                overall[k] += s[k]
-            n += 1
+            for k in sums:
+                val = s[k]
+                if isinstance(val, float) and math.isnan(val):
+                    continue
+                sums[k] += val
+                counts[k] += 1
             # free ASAP
             del t
         return _hook
@@ -101,11 +108,11 @@ def compute_activation_stats(
     for h in handles:
         h.remove()
 
-    # Guard against empty hook collection
-    if n == 0:
-        return {}, {k: 0.0 for k in overall}
+    # Guard against empty hook collection or no valid stats
+    if all(c == 0 for c in counts.values()):
+        return act_stats, {k: float("nan") for k in sums}
 
-    overall = {k: v / n for k, v in overall.items()}
+    overall = {k: (sums[k] / counts[k]) if counts[k] > 0 else float("nan") for k in sums}
     return act_stats, overall
 
 
