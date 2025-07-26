@@ -2,6 +2,11 @@
 import torch
 from torch import Tensor
 from typing import Dict, Tuple
+from rich.table import Table
+from rich.console import Console
+import math
+
+_console = Console()
 
 def _moments(t: Tensor) -> Dict[str, float]:
     """
@@ -102,3 +107,70 @@ def compute_activation_stats(
 
     overall = {k: v / n for k, v in overall.items()}
     return act_stats, overall
+
+
+def print_model_stats_table(weight_stats: Dict[str, Dict], act_stats: Dict[str, Dict]) -> None:
+    """Pretty print weight and activation stats side by side using rich.Table."""
+    stat_keys = ["stdev", "kurtosis", "max", "min", "abs_max"]
+
+    # Compute extremes for colouring
+    extremes = {}
+    for key in stat_keys:
+        vals = []
+        for d in list(weight_stats.values()) + list(act_stats.values()):
+            v = d.get(key)
+            if v is None or (isinstance(v, float) and math.isnan(v)):
+                continue
+            if key == "kurtosis":
+                vals.append(v)
+            else:
+                vals.append(abs(v))
+        if vals:
+            extremes[key] = (min(vals), max(vals))
+        else:
+            extremes[key] = (0.0, 0.0)
+
+    def colour(val, key):
+        if val is None or (isinstance(val, float) and math.isnan(val)):
+            return "[orange3]nan[/]"
+        lo, hi = extremes[key]
+        base = val if key == "kurtosis" else abs(val)
+        if hi == lo:
+            t = 1.0
+        else:
+            t = (base - lo) / (hi - lo)
+            t = max(0.0, min(1.0, t))
+        r = int(255 * t)
+        g = int(255 * (1 - t))
+        color = f"#{r:02x}{g:02x}00"
+        return f"[{color}]{val:.6f}[/]"
+
+    table = Table(title="Model Statistics", header_style="bold magenta")
+    table.add_column("Tensor", no_wrap=True)
+    for key in stat_keys:
+        table.add_column(f"W {key}", justify="right")
+        table.add_column(f"A {key}", justify="right")
+
+    printed = set()
+    for w_name, ws in weight_stats.items():
+        module = w_name.rsplit(".", 1)[0]
+        as_ = act_stats.get(module)
+        row = [w_name]
+        for key in stat_keys:
+            row.append(colour(ws.get(key), key))
+            row.append(colour(as_.get(key), key) if as_ else colour(None, key))
+        table.add_row(*row)
+        printed.add(module)
+
+    for mod, as_ in act_stats.items():
+        if mod in printed:
+            continue
+        row = [mod]
+        for key in stat_keys:
+            row.append(colour(None, key))
+            row.append(colour(as_.get(key), key))
+        table.add_row(*row)
+
+    _console.print(table)
+
+
