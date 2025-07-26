@@ -164,8 +164,17 @@ def print_model_stats_table(weight_stats: Dict[str, Dict], act_stats: Dict[str, 
                 # largest value should be green, smallest most red
                 t = (hi - val) / (hi - lo)
             elif key == "kurtosis":
-                # negative -> green, positive -> red
-                t = (val - lo) / (hi - lo)
+                # negative -> green, positive -> red. Use log scaling for
+                # smoother gradation over wide ranges.
+                abs_max = max(abs(lo), abs(hi))
+                if abs_max == 0:
+                    t = 0.5
+                else:
+                    norm = math.log(1 + abs(val)) / math.log(1 + abs_max)
+                    if val >= 0:
+                        t = 0.5 + 0.5 * norm
+                    else:
+                        t = 0.5 - 0.5 * norm
             else:
                 base = abs(val)
                 t = (base - lo) / (hi - lo)
