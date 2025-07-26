@@ -1,7 +1,7 @@
 # utils/model_stats.py
 import torch
 from torch import Tensor
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List, Optional
 from rich.table import Table
 from rich.console import Console
 import math
@@ -113,33 +113,51 @@ def print_model_stats_table(weight_stats: Dict[str, Dict], act_stats: Dict[str, 
     """Pretty print weight and activation stats side by side using rich.Table."""
     stat_keys = ["stdev", "kurtosis", "max", "min", "abs_max"]
 
-    # Compute extremes for colouring
-    extremes = {}
+    # --- Compute column extremes for colouring
+    extremes: Dict[str, Tuple[float, float]] = {}
+    all_stats = list(weight_stats.values()) + list(act_stats.values())
     for key in stat_keys:
-        vals = []
-        for d in list(weight_stats.values()) + list(act_stats.values()):
+        vals: List[float] = []
+        for d in all_stats:
             v = d.get(key)
             if v is None or (isinstance(v, float) and math.isnan(v)):
                 continue
-            if key == "kurtosis":
-                vals.append(v)
-            else:
+            if key in {"stdev", "max", "abs_max"}:
                 vals.append(abs(v))
-        if vals:
+            else:  # min or kurtosis
+                vals.append(v)
+
+        if not vals:
+            extremes[key] = (0.0, 0.0)
+            continue
+
+        if key in {"stdev", "max", "abs_max"}:
             extremes[key] = (min(vals), max(vals))
         else:
-            extremes[key] = (0.0, 0.0)
+            extremes[key] = (min(vals), max(vals))
 
-    def colour(val, key):
+    # --- helper for colouring values
+    def colour(val: Optional[float], key: str) -> str:
         if val is None or (isinstance(val, float) and math.isnan(val)):
             return "[orange3]nan[/]"
+
         lo, hi = extremes[key]
-        base = val if key == "kurtosis" else abs(val)
+
         if hi == lo:
-            t = 1.0
+            t = 0.5
         else:
-            t = (base - lo) / (hi - lo)
+            if key == "min":
+                # largest value should be green, smallest most red
+                t = (hi - val) / (hi - lo)
+            elif key == "kurtosis":
+                # negative -> green, positive -> red
+                t = (val - lo) / (hi - lo)
+            else:
+                base = abs(val)
+                t = (base - lo) / (hi - lo)
+
             t = max(0.0, min(1.0, t))
+
         r = int(255 * t)
         g = int(255 * (1 - t))
         color = f"#{r:02x}{g:02x}00"
