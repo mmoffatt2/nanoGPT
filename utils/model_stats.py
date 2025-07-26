@@ -8,6 +8,11 @@ import math
 
 _console = Console()
 
+
+def _valid_float(val: Optional[float]) -> bool:
+    """Return True if ``val`` is a finite float."""
+    return isinstance(val, float) and math.isfinite(val)
+
 def _moments(t: Tensor) -> Dict[str, float]:
     """
     In‑GPU computation of stdev, kurtosis, min, max, abs_max.
@@ -49,7 +54,7 @@ def compute_weight_stats(model: torch.nn.Module, device: torch.device) -> Tuple[
             per_tensor[name] = s
             for k in accum:                       # running mean over tensors
                 val = s[k]
-                if isinstance(val, float) and math.isnan(val):
+                if not _valid_float(val):
                     continue
                 accum[k] += val
                 counts[k] += 1
@@ -87,7 +92,7 @@ def compute_activation_stats(
             act_stats[mod_name] = s
             for k in sums:
                 val = s[k]
-                if isinstance(val, float) and math.isnan(val):
+                if not _valid_float(val):
                     continue
                 sums[k] += val
                 counts[k] += 1
@@ -121,34 +126,36 @@ def print_model_stats_table(weight_stats: Dict[str, Dict], act_stats: Dict[str, 
     stat_keys = ["stdev", "kurtosis", "max", "min", "abs_max"]
 
     # --- Compute column extremes for colouring
-    extremes: Dict[str, Tuple[float, float]] = {}
-    all_stats = list(weight_stats.values()) + list(act_stats.values())
-    for key in stat_keys:
-        vals: List[float] = []
-        for d in all_stats:
-            v = d.get(key)
-            if v is None or (isinstance(v, float) and math.isnan(v)):
-                continue
-            if key in {"stdev", "max", "abs_max"}:
-                vals.append(abs(v))
-            else:  # min or kurtosis
-                vals.append(v)
+    w_extremes: Dict[str, Tuple[float, float]] = {}
+    a_extremes: Dict[str, Tuple[float, float]] = {}
 
-        if not vals:
-            extremes[key] = (0.0, 0.0)
-            continue
+    def collect_extremes(stats: Dict[str, Dict]) -> Dict[str, Tuple[float, float]]:
+        ext: Dict[str, Tuple[float, float]] = {}
+        for key in stat_keys:
+            vals: List[float] = []
+            for d in stats.values():
+                v = d.get(key)
+                if not _valid_float(v):
+                    continue
+                if key in {"stdev", "max", "abs_max"}:
+                    vals.append(abs(v))
+                else:
+                    vals.append(v)
+            if not vals:
+                ext[key] = (0.0, 0.0)
+            else:
+                ext[key] = (min(vals), max(vals))
+        return ext
 
-        if key in {"stdev", "max", "abs_max"}:
-            extremes[key] = (min(vals), max(vals))
-        else:
-            extremes[key] = (min(vals), max(vals))
+    w_extremes = collect_extremes(weight_stats)
+    a_extremes = collect_extremes(act_stats)
 
     # --- helper for colouring values
-    def colour(val: Optional[float], key: str) -> str:
-        if val is None or (isinstance(val, float) and math.isnan(val)):
+    def colour(val: Optional[float], key: str, col_ext: Dict[str, Tuple[float, float]]) -> str:
+        if not _valid_float(val):
             return "[orange3]nan[/]"
 
-        lo, hi = extremes[key]
+        lo, hi = col_ext[key]
 
         if hi == lo:
             t = 0.5
@@ -182,8 +189,8 @@ def print_model_stats_table(weight_stats: Dict[str, Dict], act_stats: Dict[str, 
         as_ = act_stats.get(module)
         row = [w_name]
         for key in stat_keys:
-            row.append(colour(ws.get(key), key))
-            row.append(colour(as_.get(key), key) if as_ else colour(None, key))
+            row.append(colour(ws.get(key), key, w_extremes))
+            row.append(colour(as_.get(key), key, a_extremes) if as_ else colour(None, key, a_extremes))
         table.add_row(*row)
         printed.add(module)
 
@@ -192,8 +199,8 @@ def print_model_stats_table(weight_stats: Dict[str, Dict], act_stats: Dict[str, 
             continue
         row = [mod]
         for key in stat_keys:
-            row.append(colour(None, key))
-            row.append(colour(as_.get(key), key))
+            row.append(colour(None, key, w_extremes))
+            row.append(colour(as_.get(key), key, a_extremes))
         table.add_row(*row)
 
     _console.print(table)
