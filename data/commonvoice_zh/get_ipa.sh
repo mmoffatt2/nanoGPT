@@ -38,13 +38,14 @@ wget --header="Authorization: Bearer ${HF_TOKEN}" -nc -O "zh_ipa.json" "${url}/r
 echo "json files downloaded and saved to out_ipa."
 popd
 
+output_ipa_txt="zh_ipa.txt"
 for jsonfile in "$out_dir"/*.json; do
     # Check if the .json file exists (handles the case where no .json files are present)
     if [ -f "$jsonfile" ]; then
         echo "Processing $jsonfile..."
         # Get the filename without the extension for output filename
         filename=$(basename "${jsonfile%.json}")
-        python3 "$script_dir"/utils/extract_json_values.py "$jsonfile" "ipa" "$output_ipa_txt"
+        python3 "$script_dir"/utils/extract_json_values.py "$jsonfile" "sentence_ipa" "$output_ipa_txt"
     fi
 done
 echo "IPA extraction finished."
