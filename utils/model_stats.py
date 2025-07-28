@@ -172,7 +172,7 @@ def print_model_stats_table(
     """
     stat_keys = ["stdev", "kurtosis", "max", "min", "abs_max"]
 
-    # --- compute extremes for colouring ---
+
     def collect_extremes(stats: Dict[str, Dict]) -> Dict[str, Tuple[float, float]]:
         ext: Dict[str, Tuple[float, float]] = {}
         for key in stat_keys:
@@ -246,6 +246,7 @@ def print_model_stats_table(
         offset = 1 + len(stat_keys)
         for key_idx, key in enumerate(stat_keys, start=offset):
             row.append(colour(raw[key_idx], key, a_extremes))
+
         table.add_row(*row)
 
     _console.print(table)
