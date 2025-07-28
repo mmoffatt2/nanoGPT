@@ -54,58 +54,51 @@ def load_csv(path: Path) -> Tuple[List[str], Dict[str, Dict], Dict[str, Dict]]:
     return row_order, w_stats, a_stats
 
 
-def _collect_value_extremes(stats: Dict[str, Dict], keys: Iterable[str]) -> Dict[str, Tuple[float, float]]:
-    """Return min/max extremes for each *key* over ``stats`` for raw values."""
-    ext: Dict[str, Tuple[float, float]] = {}
-    for key in keys:
-        vals: List[float] = []
+def _collect_value_extremes_multi(
+    stats_list: Iterable[Dict[str, Dict]], keys: Iterable[str]
+) -> Dict[str, Tuple[float, float]]:
+    """Return min/max extremes for each *key* pooling over ``stats_list``."""
+    ext: Dict[str, List[float]] = {k: [] for k in keys}
+    for stats in stats_list:
         for d in stats.values():
-            v = d.get(key)
-            if not _valid_float(v):
-                continue
-            if key in {"stdev", "max", "abs_max"}:
-                vals.append(abs(v))
-            else:
-                vals.append(v)
-        ext[key] = (min(vals), max(vals)) if vals else (0.0, 0.0)
-    return ext
+            for key in keys:
+                v = d.get(key)
+                if not _valid_float(v):
+                    continue
+                if key in {"stdev", "max", "abs_max"}:
+                    ext[key].append(abs(v))
+                else:
+                    ext[key].append(v)
 
-
-def _collect_delta_scale(stats: Dict[str, Dict], keys: Iterable[str]) -> Dict[str, float]:
-    """Return maximum absolute delta per key."""
-    out: Dict[str, float] = {}
-    for key in keys:
-        vals: List[float] = []
-        for d in stats.values():
-            v = d.get(key)
-            if not _valid_float(v):
-                continue
-            vals.append(abs(v))
-        out[key] = max(vals) if vals else 0.0
+    out: Dict[str, Tuple[float, float]] = {}
+    for key, vals in ext.items():
+        out[key] = (min(vals), max(vals)) if vals else (0.0, 0.0)
     return out
 
 
-def _colour_delta(val: float, key: str, max_abs: float) -> str:
-    """Colour a delta value green for improvement or red for worsening."""
+def _colour_delta(val: float, key: str) -> str:
+    """Colour a delta value: green for improvement, red for worsening."""
     if not _valid_float(val):
         return "[orange3]nan[/]"
 
-    if max_abs == 0:
-        intensity = 0.0
-    else:
-        intensity = min(abs(val) / max_abs, 1.0)
+    improving = val < 0 if key != "min" else val > 0
+    color = "green" if improving else "red"
+    return f"[{color}]{val:.6f}[/]"
+
+
+def _percent_change(old: float, new: float) -> float:
+    if not _valid_float(old) or not _valid_float(new) or old == 0:
+        return float("nan")
+    return ((new - old) / abs(old)) * 100.0
+
+
+def _colour_percent(val: float, key: str) -> str:
+    if not _valid_float(val):
+        return "[orange3]nan[/]"
 
     improving = val < 0 if key != "min" else val > 0
-
-    if improving:
-        r = int(255 * (1 - intensity))
-        g = int(255 * intensity)
-    else:
-        r = int(255 * intensity)
-        g = int(255 * (1 - intensity))
-
-    color = f"#{r:02x}{g:02x}00"
-    return f"[{color}]{val:.6f}[/]"
+    color = "green" if improving else "red"
+    return f"[{color}]{val:.2f}%[/]"
 
 
 def _colour_val(val: float, key: str, ext: Dict[str, Tuple[float, float]]) -> str:
@@ -166,12 +159,8 @@ def print_delta(
             v2 = a2.get(name, {}).get(k, float("nan"))
             diff_a[name][k] = v2 - v1
 
-    w1_ext = _collect_value_extremes(w1, stats)
-    a1_ext = _collect_value_extremes(a1, stats)
-    w2_ext = _collect_value_extremes(w2, stats)
-    a2_ext = _collect_value_extremes(a2, stats)
-    w_delta_scale = _collect_delta_scale(diff_w, stats)
-    a_delta_scale = _collect_delta_scale(diff_a, stats)
+    w_ext = _collect_value_extremes_multi([w1, w2], stats)
+    a_ext = _collect_value_extremes_multi([a1, a2], stats)
 
     console = Console()
     table = Table(title="Δ Model Statistics", header_style="bold magenta")
@@ -180,10 +169,12 @@ def print_delta(
         table.add_column(f"W {key} 1", justify="right")
         table.add_column(f"W {key} 2", justify="right")
         table.add_column(f"ΔW {key}", justify="right")
+        table.add_column(f"ΔW {key}%", justify="right")
     for key in stats:
         table.add_column(f"A {key} 1", justify="right")
         table.add_column(f"A {key} 2", justify="right")
         table.add_column(f"ΔA {key}", justify="right")
+        table.add_column(f"ΔA {key}%", justify="right")
 
     # Ensure deterministic row ordering
     all_names = list(row_order)
@@ -199,17 +190,21 @@ def print_delta(
             w_v1 = w1.get(name, {}).get(k, float("nan"))
             w_v2 = w2.get(name, {}).get(k, float("nan"))
             delta_w = diff_w.get(name, {}).get(k, float("nan"))
-            row.append(_colour_val(w_v1, k, w1_ext))
-            row.append(_colour_val(w_v2, k, w2_ext))
-            row.append(_colour_delta(delta_w, k, w_delta_scale[k]))
+            pct_w = _percent_change(w_v1, w_v2)
+            row.append(_colour_val(w_v1, k, w_ext))
+            row.append(_colour_val(w_v2, k, w_ext))
+            row.append(_colour_delta(delta_w, k))
+            row.append(_colour_percent(pct_w, k))
 
         for k in stats:
             a_v1 = a1.get(module, {}).get(k, float("nan"))
             a_v2 = a2.get(module, {}).get(k, float("nan"))
             delta_a = diff_a.get(module, {}).get(k, float("nan"))
-            row.append(_colour_val(a_v1, k, a1_ext))
-            row.append(_colour_val(a_v2, k, a2_ext))
-            row.append(_colour_delta(delta_a, k, a_delta_scale[k]))
+            pct_a = _percent_change(a_v1, a_v2)
+            row.append(_colour_val(a_v1, k, a_ext))
+            row.append(_colour_val(a_v2, k, a_ext))
+            row.append(_colour_delta(delta_a, k))
+            row.append(_colour_percent(pct_a, k))
 
         table.add_row(*row)
         printed.add(module)
@@ -223,15 +218,18 @@ def print_delta(
             row.extend([
                 "nan",
                 "nan",
-                _colour_delta(float("nan"), k, w_delta_scale[k]),
+                _colour_delta(float("nan"), k),
+                _colour_percent(float("nan"), k),
             ])
         for k in stats:
             a_v1 = a1.get(mod, {}).get(k, float("nan"))
             a_v2 = a2.get(mod, {}).get(k, float("nan"))
             delta_a = diff_a.get(mod, {}).get(k, float("nan"))
-            row.append(_colour_val(a_v1, k, a1_ext))
-            row.append(_colour_val(a_v2, k, a2_ext))
-            row.append(_colour_delta(delta_a, k, a_delta_scale[k]))
+            pct_a = _percent_change(a_v1, a_v2)
+            row.append(_colour_val(a_v1, k, a_ext))
+            row.append(_colour_val(a_v2, k, a_ext))
+            row.append(_colour_delta(delta_a, k))
+            row.append(_colour_percent(pct_a, k))
         table.add_row(*row)
 
     console.print(table)
