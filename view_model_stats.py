@@ -7,12 +7,17 @@ import argparse
 import csv
 import math
 from pathlib import Path
-from typing import Dict, Tuple, List, Iterable
+from typing import Dict, Tuple, List, Iterable, Optional
 
 from rich.console import Console
 from rich.table import Table
 
 from utils.model_stats import print_model_stats_table
+
+
+def _valid_float(val: Optional[float]) -> bool:
+    """Return True if ``val`` is a finite float."""
+    return isinstance(val, float) and math.isfinite(val)
 
 STAT_KEYS = ["stdev", "kurtosis", "max", "min", "abs_max"]
 
@@ -49,30 +54,84 @@ def load_csv(path: Path) -> Tuple[List[str], Dict[str, Dict], Dict[str, Dict]]:
     return row_order, w_stats, a_stats
 
 
-def _collect_extremes(stats: Dict[str, Dict], keys: Iterable[str]) -> Dict[str, Tuple[float, float]]:
-    """Return min/max extremes for each *key* over ``stats``."""
+def _collect_value_extremes(stats: Dict[str, Dict], keys: Iterable[str]) -> Dict[str, Tuple[float, float]]:
+    """Return min/max extremes for each *key* over ``stats`` for raw values."""
     ext: Dict[str, Tuple[float, float]] = {}
     for key in keys:
         vals: List[float] = []
         for d in stats.values():
             v = d.get(key)
-            if not isinstance(v, float) or not math.isfinite(v):
+            if not _valid_float(v):
                 continue
-            trans = -v if key != "min" else v
-            vals.append(trans)
+            if key in {"stdev", "max", "abs_max"}:
+                vals.append(abs(v))
+            else:
+                vals.append(v)
         ext[key] = (min(vals), max(vals)) if vals else (0.0, 0.0)
     return ext
 
 
-def _colour_delta(val: float, key: str, lo: float, hi: float) -> str:
-    if not isinstance(val, float) or not math.isfinite(val):
+def _collect_delta_scale(stats: Dict[str, Dict], keys: Iterable[str]) -> Dict[str, float]:
+    """Return maximum absolute delta per key."""
+    out: Dict[str, float] = {}
+    for key in keys:
+        vals: List[float] = []
+        for d in stats.values():
+            v = d.get(key)
+            if not _valid_float(v):
+                continue
+            vals.append(abs(v))
+        out[key] = max(vals) if vals else 0.0
+    return out
+
+
+def _colour_delta(val: float, key: str, max_abs: float) -> str:
+    """Colour a delta value green for improvement or red for worsening."""
+    if not _valid_float(val):
         return "[orange3]nan[/]"
-    trans = -val if key != "min" else val
+
+    if max_abs == 0:
+        intensity = 0.0
+    else:
+        intensity = min(abs(val) / max_abs, 1.0)
+
+    improving = val < 0 if key != "min" else val > 0
+
+    if improving:
+        r = int(255 * (1 - intensity))
+        g = int(255 * intensity)
+    else:
+        r = int(255 * intensity)
+        g = int(255 * (1 - intensity))
+
+    color = f"#{r:02x}{g:02x}00"
+    return f"[{color}]{val:.6f}[/]"
+
+
+def _colour_val(val: float, key: str, ext: Dict[str, Tuple[float, float]]) -> str:
+    """Colour a raw value using the same logic as training output."""
+    if not _valid_float(val):
+        return "[orange3]nan[/]"
+
+    lo, hi = ext[key]
     if hi == lo:
         t = 0.5
     else:
-        t = 1 - (trans - lo) / (hi - lo)
+        if key == "min":
+            t = (hi - val) / (hi - lo)
+        elif key == "kurtosis":
+            abs_max = max(abs(lo), abs(hi))
+            if abs_max == 0:
+                t = 0.5
+            else:
+                norm = math.log(1 + abs(val)) / math.log(1 + abs_max)
+                t = 0.5 + 0.5 * norm if val >= 0 else 0.5 - 0.5 * norm
+        else:
+            base = abs(val)
+            t = (base - lo) / (hi - lo)
+
         t = max(0.0, min(1.0, t))
+
     r = int(255 * t)
     g = int(255 * (1 - t))
     color = f"#{r:02x}{g:02x}00"
@@ -107,8 +166,12 @@ def print_delta(
             v2 = a2.get(name, {}).get(k, float("nan"))
             diff_a[name][k] = v2 - v1
 
-    w_ext = _collect_extremes(diff_w, stats)
-    a_ext = _collect_extremes(diff_a, stats)
+    w1_ext = _collect_value_extremes(w1, stats)
+    a1_ext = _collect_value_extremes(a1, stats)
+    w2_ext = _collect_value_extremes(w2, stats)
+    a2_ext = _collect_value_extremes(a2, stats)
+    w_delta_scale = _collect_delta_scale(diff_w, stats)
+    a_delta_scale = _collect_delta_scale(diff_a, stats)
 
     console = Console()
     table = Table(title="Δ Model Statistics", header_style="bold magenta")
@@ -136,17 +199,17 @@ def print_delta(
             w_v1 = w1.get(name, {}).get(k, float("nan"))
             w_v2 = w2.get(name, {}).get(k, float("nan"))
             delta_w = diff_w.get(name, {}).get(k, float("nan"))
-            row.append(f"{w_v1:.6f}" if math.isfinite(w_v1) else "nan")
-            row.append(f"{w_v2:.6f}" if math.isfinite(w_v2) else "nan")
-            row.append(_colour_delta(delta_w, k, *w_ext[k]))
+            row.append(_colour_val(w_v1, k, w1_ext))
+            row.append(_colour_val(w_v2, k, w2_ext))
+            row.append(_colour_delta(delta_w, k, w_delta_scale[k]))
 
         for k in stats:
             a_v1 = a1.get(module, {}).get(k, float("nan"))
             a_v2 = a2.get(module, {}).get(k, float("nan"))
             delta_a = diff_a.get(module, {}).get(k, float("nan"))
-            row.append(f"{a_v1:.6f}" if math.isfinite(a_v1) else "nan")
-            row.append(f"{a_v2:.6f}" if math.isfinite(a_v2) else "nan")
-            row.append(_colour_delta(delta_a, k, *a_ext[k]))
+            row.append(_colour_val(a_v1, k, a1_ext))
+            row.append(_colour_val(a_v2, k, a2_ext))
+            row.append(_colour_delta(delta_a, k, a_delta_scale[k]))
 
         table.add_row(*row)
         printed.add(module)
@@ -160,15 +223,15 @@ def print_delta(
             row.extend([
                 "nan",
                 "nan",
-                _colour_delta(float("nan"), k, *w_ext[k]),
+                _colour_delta(float("nan"), k, w_delta_scale[k]),
             ])
         for k in stats:
             a_v1 = a1.get(mod, {}).get(k, float("nan"))
             a_v2 = a2.get(mod, {}).get(k, float("nan"))
             delta_a = diff_a.get(mod, {}).get(k, float("nan"))
-            row.append(f"{a_v1:.6f}" if math.isfinite(a_v1) else "nan")
-            row.append(f"{a_v2:.6f}" if math.isfinite(a_v2) else "nan")
-            row.append(_colour_delta(delta_a, k, *a_ext[k]))
+            row.append(_colour_val(a_v1, k, a1_ext))
+            row.append(_colour_val(a_v2, k, a2_ext))
+            row.append(_colour_delta(delta_a, k, a_delta_scale[k]))
         table.add_row(*row)
 
     console.print(table)
