@@ -17,6 +17,8 @@ python3 train.py \
   --block_size 128 \
   --learning_rate 3e-4 \
   --compile \
+  --no-tensorboard_log \
+  --compute_model_stats \
   --print_model_stats_table adam_stats.csv
 
 # Train a similar model with AdamW
@@ -28,7 +30,9 @@ python3 train.py \
   --block_size 128 \
   --learning_rate 3e-4 \
   --compile \
+  --no-tensorboard_log \
+  --compute_model_stats \
   --print_model_stats_table adamw_stats.csv
 
 # Display the coloured delta between the two runs
-python3 view_model_stats.py adam_stats.csv adamw_stats.csv
+python3 view_model_stats.py adam_stats.csv adamw_stats.csv --stats kurtosis
