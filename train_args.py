@@ -1005,6 +1005,14 @@ def parse_args():
             "'gpu' avoids host‑RAM spikes; 'cpu' saves VRAM."
             )
 
+    training_group.add_argument(
+            '--print_model_stats_table',
+            type=str,
+            default=None,
+            metavar='CSV_PATH',
+            help='If set, also save the printed model statistics table to this CSV file.'
+            )
+
     ## Export Model graph
     logging_group.add_argument('--export_model_graph', default=False, action=argparse.BooleanOptionalAction, help="exports tensorboard model of graph")
 
