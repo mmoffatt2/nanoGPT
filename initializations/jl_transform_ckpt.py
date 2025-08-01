@@ -1,8 +1,12 @@
+# initializations/jl_transform_ckpt.py
 import argparse
 import os
 import shutil
 import math
 import torch
+import datetime
+from rich.console import Console
+from rich.progress import Progress, TextColumn, BarColumn, TimeElapsedColumn
 
 
 def parse_args():
@@ -34,7 +38,7 @@ def parse_args():
     )
     parser.add_argument(
         "--jl_type",
-        choices=["sign", "gaussian", "sparse", "srht"],
+        choices=["sign", "gaussian", "sparse", "srht", "qr"],
         default="gaussian",
         help="Type of JL transform: 'sign', 'gaussian', 'sparse' (Achlioptas), or 'srht'",
     )
@@ -55,8 +59,26 @@ def parse_args():
         action="store_true",
         help="Project c_proj weights along the out_features dimension instead of the in_features dimension",
     )
+    parser.add_argument(
+        "--dry_run",
+        action="store_true",
+        help="Preview shapes & stats but DO NOT write checkpoint",
+    )
+    parser.add_argument(
+        "--proj_out",
+        type=str,
+        default=None,
+        help="File to which the projection matrix will be saved (torch.save)",
+    )
+    parser.add_argument(
+        "--proj_in",
+        type=str,
+        default=None,
+        help="Load a pre-computed projection matrix instead of sampling one",
+    )
     return parser.parse_args()
 
+console = Console()
 
 def sign_matrix(out_dim: int, in_dim: int, generator: torch.Generator, device) -> torch.Tensor:
     """Create a sign-based JL projection matrix of shape (out_dim, in_dim)."""
@@ -106,7 +128,8 @@ def main():
     ckpt_path = os.path.join(args.ckpt_dir, "ckpt.pt")
     meta_path = os.path.join(args.ckpt_dir, "meta.pkl")
 
-    checkpoint = torch.load(ckpt_path, map_location="cpu")
+    console.rule("[bold cyan]Loading checkpoint")
+    checkpoint = torch.load(ckpt_path, map_location="cpu", weights_only=True)
     state_dict = checkpoint.get("model", checkpoint)
 
     # optimizer and scheduler states depend on parameter shapes.
@@ -135,9 +158,16 @@ def main():
             old_v_dim = old_embd // n_head
 
 
-    if args.jl_type == "gaussian":
-        proj = torch.empty((args.out_embd, old_embd), generator=g, device="cpu")
-        proj.normal_(mean=args.gaussian_mean, std=args.gaussian_std)
+    if args.proj_in:
+        console.print(f"[green]Loading projection matrix from[/] {args.proj_in}")
+        proj = torch.load(args.proj_in, map_location="cpu")
+        if proj.shape != (args.out_embd, old_embd):
+            raise ValueError(f"Loaded proj shape {proj.shape} != ({args.out_embd}, {old_embd})")
+    elif args.jl_type == "gaussian":
+        proj = torch.empty((args.out_embd, old_embd), device="cpu")
+        proj.normal_(mean=args.gaussian_mean,
+                 std=args.gaussian_std,
+                 generator=g)
         proj /= math.sqrt(args.out_embd)
     elif args.jl_type == "sparse":
         rand = torch.rand(args.out_embd, old_embd, generator=g, device="cpu")
@@ -160,21 +190,53 @@ def main():
         idx = torch.randperm(old_embd, generator=g)[: args.out_embd]
         proj = H[idx] * D
         proj /= math.sqrt(args.out_embd)
+    elif args.jl_type == "qr":
+        console.print("[yellow]Generating orthogonal JL (QR) …")
+        raw = torch.randn(args.out_embd, old_embd, generator=g, device="cpu")
+        # QR on the *transpose* to avoid huge tall-skinny matrix when out_embd < old_embd
+        q, _ = torch.linalg.qr(raw.T, mode="reduced")      # (old_embd, out_embd)
+        proj = q.T                                         # (out_embd, old_embd)
+        proj /= math.sqrt(args.out_embd)
     else:
         proj = sign_matrix(args.out_embd, old_embd, g, device="cpu")
+
+    # ------------------------------------------------------------------ #
+    # Optionally persist the projection matrix
+    # ------------------------------------------------------------------ #
+    if args.proj_out:
+        console.print(f"[green]Saving projection matrix →[/] {args.proj_out}")
+        torch.save(proj, args.proj_out)
+
+    checkpoint.setdefault("config", {})["attn_variant"] = checkpoint.get(
+        "config", {}
+    ).get("attn_variant", "infinite")
 
     # gather mlp expansion sizes so we can preserve them regardless of new n_embd
     mlp_sizes = []
 
-    for key, tensor in list(state_dict.items()):
-        if not torch.is_floating_point(tensor):
-            continue
+    # -------------------- progress bar over tensors -------------------- #
+    total_fp = sum(1 for t in state_dict.values() if torch.is_floating_point(t))
+    console.rule("[bold cyan]Projecting tensors")
+    bar = Progress(
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(bar_width=None),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TimeElapsedColumn(),
+        console=console,
+    )
+    tid = bar.add_task("JL-mapping", total=total_fp)
 
-        if key.endswith("mlp.c_fc.weight") and tensor.ndim == 2:
-            mlp_sizes.append(tensor.shape[0])
+    with bar:
+        for key, tensor in list(state_dict.items()):
+            if not torch.is_floating_point(tensor):
+                continue
 
-        vertical = args.cproj_vertical and key.endswith("c_proj.weight")
-        state_dict[key] = jl_project_tensor(tensor, proj, vertical_only=vertical)
+            if key.endswith("mlp.c_fc.weight") and tensor.ndim == 2:
+                mlp_sizes.append(tensor.shape[0])
+
+            vertical = args.cproj_vertical and key.endswith("c_proj.weight")
+            state_dict[key] = jl_project_tensor(tensor, proj, vertical_only=vertical)
+            bar.advance(tid)
 
     if "model_args" in checkpoint:
         checkpoint["model_args"]["n_embd"] = args.out_embd
@@ -204,14 +266,26 @@ def main():
     checkpoint["iter_num"] = 0
     checkpoint["best_val_loss"] = 1e9
     checkpoint["best_iter"] = 0
+    if args.dry_run:
+        console.rule("[bold red]Dry-run complete -- nothing written[/]")
+        console.print(f"Projected shapes preserved • {total_fp} tensors visited")
+        return
 
     out_dir = args.out_dir or f"{args.ckpt_dir.rstrip('/').rstrip(os.sep)}_jl"
     os.makedirs(out_dir, exist_ok=True)
 
+    console.rule("[bold cyan]Saving new checkpoint")
     torch.save(checkpoint, os.path.join(out_dir, "ckpt.pt"))
     if os.path.exists(meta_path):
         shutil.copy2(meta_path, os.path.join(out_dir, "meta.pkl"))
 
+    console.print(
+        f"[green]✔ All done[/] → {out_dir}  "
+        f"([bold]{args.out_embd}[/]-dim, JL = {args.jl_type})  "
+        f"at {datetime.datetime.now().isoformat(timespec='seconds')}"
+    )
+
 
 if __name__ == "__main__":
     main()
+
