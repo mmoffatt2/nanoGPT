@@ -87,3 +87,4 @@ class Block(nn.Module):
         if self.use_gradient_checkpointing and x.requires_grad:
             return checkpoint.checkpoint(self.block_forward, self, x, iter_num, use_reentrant=False)
         return self.block_forward(self, x, iter_num)
+
