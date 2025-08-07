@@ -7,9 +7,6 @@ from rich.console import Console
 import math
 import csv
 
-_console = Console()
-
-
 def _valid_float(val: Optional[float]) -> bool:
     """Return True if ``val`` is a finite float."""
     return isinstance(val, float) and math.isfinite(val)
@@ -165,6 +162,7 @@ def print_model_stats_table(
     weight_stats: Dict[str, Dict],
     act_stats: Dict[str, Dict],
     csv_path: Optional[str] = None,
+    console: Console | None = None,
 ) -> None:
     """Pretty print weight and activation stats side by side using rich.Table.
 
@@ -249,6 +247,6 @@ def print_model_stats_table(
 
         table.add_row(*row)
 
-    _console.print(table)
-
+    console = console or Console()
+    console.print(table)
 

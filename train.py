@@ -13,6 +13,7 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from rich.console import Group
+from rich.console import Console
 from rich.text import Text
 from rich.live import Live
 
@@ -941,7 +942,7 @@ class Trainer:
             self.latest_overall_weight_stats     = overall_wt
             self.latest_overall_activation_stats = overall_act
 
-            print_model_stats_table(weight_stats, act_stats, csv_path=self.stats_csv_path)
+            print_model_stats_table(weight_stats, act_stats, csv_path=self.stats_csv_path, console=self.console)
         else:
             act_stats  = {}   # keep API intact
             weight_stats = {}
@@ -1285,6 +1286,7 @@ class Trainer:
             for head in range(self.args.n_head):
                 graph_y_labels.append(f"Layer {layer} Head {head}")
 
+        self.console = Console()
         # Create progress bar with ETA and remaining time display
         progress = Progress(
             TextColumn("[bold white]{task.description}"),
@@ -1295,11 +1297,13 @@ class Trainer:
             TextColumn("-- [bold purple3]ETA:[/bold purple3]{task.fields[eta]}"),
             TextColumn("[bold purple3]Remaining:[/bold purple3]{task.fields[hour]}h{task.fields[min]}m"),
             TextColumn("[bold purple3]total_est:[/bold purple3]{task.fields[total_hour]}h{task.fields[total_min]}m"),
+            console=self.console
         )
 
         cli_settings = " ".join(sys.argv)
         cli_text = Text(f"CLI: {cli_settings}", style="chartreuse1")
-        with Live(Group(progress.get_renderable(), cli_text), refresh_per_second=10) as live:
+
+        with Live(Group(progress.get_renderable(), cli_text), console=self.console, refresh_per_second=10) as live:
             task_id = progress.add_task(
                 "[green]Training...",
                 total=((self.args.max_iters - self.iter_num) + self.evaluations_remaining * self.args.eval_iters),
