@@ -1,0 +1,40 @@
+# block_settings_sweep.yaml
+---
+# parameter_groups: define sets of overrides to apply on top of base params
+parameter_groups:
+  - use_rotary_embeddings: [true]
+    use_abs_pos_embeddings: [false]
+    use_parallel_mlp: [true]
+    use_peri_ln: [true, false]
+    use_post_ln: [true, false]
+
+# base hyperparameters
+max_iters: [10000]
+n_layer: [5]
+n_head: [6]
+n_embd: [384]
+block_size: [256]
+device: ["cuda"]
+dtype: ["bfloat16"]
+dataset: ["minipile"]
+
+# qk norm
+use_qk_norm: [true]
+use_qk_norm_scale: [true]
+
+# checkpointing
+use_gradient_checkpointing: [true, false]
+
+# track everything
+compute_model_stats: [true]
+
+# ranged sweep
+seed:
+  range:
+    start: 100
+    end: 102
+    step: 1
+
+# boolean flags
+compile: [true, false]
+
