@@ -1,5 +1,5 @@
 """Block definitions and forward variations."""
-
+from __future__ import annotations
 from typing import Callable
 import torch
 import torch.nn as nn
@@ -10,7 +10,7 @@ from variations.mlp_variations import get_mlp_instance
 from variations.norm_variations import norm_dictionary
 
 # type alias for the forward function
-BlockForward = Callable[["Block", torch.Tensor, int], torch.Tensor]
+BlockForward = Callable[[Block, torch.Tensor, int], torch.Tensor]
 
 
 def parallel_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
