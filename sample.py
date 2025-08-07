@@ -415,6 +415,7 @@ def sample_with_existing_model(
     best_val_loss: Optional[float] = None,
     run_name: Optional[str] = None,
     writer: Optional[object] = None,
+    console: Console | None = None,
 ):
     """
     Generate text from an already-loaded GPT model.
@@ -431,7 +432,7 @@ def sample_with_existing_model(
         When provided, dataset metrics for each top-k sample will be logged to TensorBoard.
     """
 
-    console = Console()
+    console = console or Console()
 
     # Determine sampling strategy. Softmax threshold overrides top_k.
     if args.softmax_threshold is not None:
@@ -476,7 +477,7 @@ def sample_with_existing_model(
                     else:
                         model.set_lsv_mode(1)
 
-                    print(f"[green]LSV[/green]  idx={sample_idx % args.lsv_size} "
+                    console.print(f"[green]LSV[/green]  idx={sample_idx % args.lsv_size} "
                           f"scale={args.lsv_scaling_factor} "
                           f"mixture={args.lsv_mixture}")
             # ------------- END LSV per-sample section -------------------
