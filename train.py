@@ -469,6 +469,7 @@ class Trainer:
 
     @torch.no_grad()
     def sample_and_print(self):
+        self.console.rule("[bold green]Inference Samples[/bold green]")
         # Do one iteration per lsv, default to one with no lsv
         sample_iterations = 1
 
@@ -514,6 +515,8 @@ class Trainer:
             self.run_dataset_benchmarks()
 
         self.model.train()
+        self.console.rule("[bold green]End Samples[/bold green]")
+        self.console.print("\n"*8)
 
     def get_vocab_size_from_meta(self):
         # Data loader
@@ -1455,7 +1458,9 @@ class Trainer:
                         if self.args.sample_each_eval:
                             # Try model inference (e.g. exploring inference from overfitting)
                             if self.args.max_sample_tokens:
+                                live.stop()
                                 self.sample_and_print()
+                                live.start()
                         if self.args.export_wte_each_eval:
                             # export wte table to npy file
                             if self.args.export_wte_npy:
