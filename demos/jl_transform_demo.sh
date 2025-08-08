@@ -56,7 +56,7 @@ python3 initializations/jl_transform_ckpt.py \
   --out_embd "${embd_dim}" \
   --proj_out proj_"${embd_dim}".pt \
   --jl_type gaussian \
-  --gaussian_std 1.0 # TODO: try different std dev
+  --gaussian_std 1.0 # For experiments with different std devs, see jl_transform_types_comparison.sh
 
 echo "4. Transform minipile model with saved projection matrix used with minipile model"
 python3 initializations/jl_transform_ckpt.py \
