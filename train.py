@@ -13,6 +13,7 @@ from collections import deque
 from datetime import datetime, timedelta
 
 from rich.console import Group
+from rich.console import Console
 from rich.text import Text
 from rich.live import Live
 
@@ -128,6 +129,8 @@ class Trainer:
         # The CLI flag is optional; fall back to CPU if it isn’t present.
         stats_dev_flag  = getattr(self.args, "model_stats_device", "cpu")
         self.stats_device = torch.device("cuda") if stats_dev_flag == "gpu" else torch.device("cpu")
+
+        self.stats_csv_path = getattr(self.args, "print_model_stats_table", None)
 
         # calculation on end time via eval cycle
         self.eval_cycle_window = deque(maxlen=self.args.eval_cycle_window)
@@ -478,6 +481,7 @@ class Trainer:
 
     @torch.no_grad()
     def sample_and_print(self):
+        self.console.rule("[bold green]Inference Samples[/bold green]")
         # Do one iteration per lsv, default to one with no lsv
         sample_iterations = 1
 
@@ -523,6 +527,7 @@ class Trainer:
                     args=self.args,
                     writer=self.writer if self.args.tensorboard_log else None,
                     dataset_idx=i if hasattr(self, 'encode_dict') else None,
+                    console=self.console,
                 )
 
         # After sampling from the model, optionally run simple dataset benchmarks
@@ -530,6 +535,8 @@ class Trainer:
             self.run_dataset_benchmarks()
 
         self.model.train()
+        self.console.rule("[bold green]End Samples[/bold green]")
+        self.console.print("\n"*8)
 
     def get_vocab_size_from_meta(self):
         # Data loader
@@ -576,7 +583,8 @@ class Trainer:
 
             start = random.randint(0, len(data) - self.args.max_sample_tokens)
             ids = data[start : start + self.args.max_sample_tokens].astype(int)
-            text = decode_fn(ids.tolist())
+            text = decode_fn(ids.tolist())        f"at {datetime.datetime.now().isoformat(timespec='seconds')}"
+
             from benchmarks import run_all
 
             metrics = run_all(text)
@@ -962,7 +970,7 @@ class Trainer:
             self.latest_overall_weight_stats     = overall_wt
             self.latest_overall_activation_stats = overall_act
 
-            print_model_stats_table(weight_stats, act_stats)
+            print_model_stats_table(weight_stats, act_stats, csv_path=self.stats_csv_path, console=self.console)
         else:
             act_stats  = {}   # keep API intact
             weight_stats = {}
@@ -1306,6 +1314,9 @@ class Trainer:
             for head in range(self.args.n_head):
                 graph_y_labels.append(f"Layer {layer} Head {head}")
 
+        cli_settings = " ".join(sys.argv)
+        cli_text = Text(f"CLI: {cli_settings}", style="chartreuse1")
+        self.console = Console()
         # Create progress bar with ETA and remaining time display
         progress = Progress(
             TextColumn("[bold white]{task.description}"),
@@ -1316,11 +1327,10 @@ class Trainer:
             TextColumn("-- [bold purple3]ETA:[/bold purple3]{task.fields[eta]}"),
             TextColumn("[bold purple3]Remaining:[/bold purple3]{task.fields[hour]}h{task.fields[min]}m"),
             TextColumn("[bold purple3]total_est:[/bold purple3]{task.fields[total_hour]}h{task.fields[total_min]}m"),
+            console=self.console
         )
 
-        cli_settings = " ".join(sys.argv)
-        cli_text = Text(f"CLI: {cli_settings}", style="chartreuse1")
-        with Live(Group(progress.get_renderable(), cli_text), refresh_per_second=10) as live:
+        with Live(Group(progress.get_renderable(), cli_text), console=self.console, refresh_per_second=10) as live:
             task_id = progress.add_task(
                 "[green]Training...",
                 total=((self.args.max_iters - self.iter_num) + self.evaluations_remaining * self.args.eval_iters),
@@ -1371,7 +1381,7 @@ class Trainer:
                                 log_message+=f", gns {self.gns:.2f}"
                             log_message+=f", lr {self.lr:.4f}"
                             log_message+=f", tokens_trained {self.tokens_trained_dict[dataset]:.2e}"
-                            print(log_message)
+                            self.console.print(log_message)
                             self.log_metrics(dataset_losses, running_mfu, self.epochs_trained_dict[dataset], self.tokens_trained_dict[dataset], dataset, better_than_chance)
                     elif self.args.multicontext_datasets is not None:
                         # Print loss for each dataset if multiple datasets are used
@@ -1389,7 +1399,7 @@ class Trainer:
                                 log_message+=f", gns {self.gns:.2f}"
                             log_message+=f", lr {self.lr:.4f}"
                             log_message+=f", tokens_trained {self.tokens_trained:.2e}"
-                            print(log_message)
+                            self.console.print(log_message)
                             better_than_chance = self.vocab_sizes[dataset] / math.exp(dataset_losses['val'].item())
                             self.log_metrics(dataset_losses, running_mfu, current_epoch, self.tokens_trained, dataset, better_than_chance)
                     else:
@@ -1407,7 +1417,7 @@ class Trainer:
                             log_message+=f", gns {self.gns:.2f}"
                         log_message+=f", batch_size {self.args.batch_size}"
                         log_message+=f", lr {self.lr:.4f}"
-                        print(log_message)
+                        self.console.print(log_message)
                         self.log_metrics(losses, running_mfu, current_epoch, self.tokens_trained, current_dataset, better_than_chance)
 
                     if math.isnan(losses["val"]):
@@ -1459,7 +1469,9 @@ class Trainer:
 
                         # Sample
                         if self.args.max_sample_tokens:
+                            live.stop()
                             self.sample_and_print()
+                            live.start()
                         # export embedding table to npy file
                         if self.args.export_wte_npy:
                             self.raw_model.export_wte(self.args.export_wte_npy)
@@ -1470,7 +1482,9 @@ class Trainer:
                         if self.args.sample_each_eval:
                             # Try model inference (e.g. exploring inference from overfitting)
                             if self.args.max_sample_tokens:
+                                live.stop()
                                 self.sample_and_print()
+                                live.start()
                         if self.args.export_wte_each_eval:
                             # export wte table to npy file
                             if self.args.export_wte_npy:
@@ -1629,7 +1643,7 @@ class Trainer:
                     if self.args.log_grad_std:
                         log_message+= f", grad_std {self.grad_std:.2f}"
 
-                    print(log_message)
+                    self.console.print(log_message)
 
                     if math.isnan(lossf):
                         # If training loss is nan, then exit.
@@ -1675,7 +1689,9 @@ class Trainer:
 
                         # Sample if set
                         if self.args.max_sample_tokens:
+                            live.stop()
                             self.sample_and_print()
+                            live.start()
                     break
 
             if self.args.plot_statistics:
