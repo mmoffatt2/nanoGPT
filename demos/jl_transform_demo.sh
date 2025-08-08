@@ -1,6 +1,8 @@
 #!/bin/bash
 # demos/jl_transform_demo.sh
 
+embd_dim=350
+
 echo "1. Prepare datasets"
 
 # obtain and tokenize shakespeare char
@@ -51,16 +53,16 @@ echo "3. Transform Shakespeare model with Gaussian-based JL Transform"
 python3 initializations/jl_transform_ckpt.py \
   ${out_shakes} \
   --out_dir "${out_shakes}_jl" \
-  --out_embd 350 \
-  --proj_out proj_350.pt \
+  --out_embd "${embd_dim}" \
+  --proj_out proj_"${embd_dim}".pt \
   --jl_type gaussian \
   --gaussian_std 1.0 # TODO: try different std dev
 
 echo "4. Transform minipile model with saved projection matrix used with minipile model"
 python3 initializations/jl_transform_ckpt.py \
   "$out_mini" \
-  --out_embd 350 \
-  --proj_in proj_350.pt \
+  --out_embd "${embd_dim}" \
+  --proj_in proj_"${embd_dim}".pt \
   --out_dir "${out_mini}_jl"
 
 
