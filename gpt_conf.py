@@ -308,6 +308,7 @@ class GPTConfig:
 
     # Structuring Options, remember to compile the model
     use_post_ln: bool = False
+    use_pre_ln: bool = True
     use_peri_ln: bool = False
 
     # Layernorm Alternatives and Options

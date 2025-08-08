@@ -135,7 +135,9 @@ class TiktokenTokenizer(Tokenizer):
                 name=f"{self.tiktoken_encoding}_custom",
                 pat_str=base_enc._pat_str,
                 mergeable_ranks=base_enc._mergeable_ranks,
-                special_tokens={**base_enc._special_tokens, **self.additional_tokens}
+                special_tokens={**base_enc._special_tokens,
+                                **self.additional_tokens},
+                disallowed_special=(),
             )
             self.special_tokens = self.additional_tokens
         else:
@@ -171,7 +173,11 @@ class TiktokenTokenizer(Tokenizer):
                 chunk = data[current_pos:next_special]
                 if chunk:
                     # Use encode() for proper subword tokenization
-                    chunk_ids = self.enc.encode(chunk, allowed_special=set())
+                    chunk_ids = self.enc.encode(
+                            chunk,
+                            allowed_special=set(),
+                            disallowed_special=(),
+                            )
                     token_ids.extend(chunk_ids)
                     for token_id in chunk_ids:
                         self.record_token(token_id)

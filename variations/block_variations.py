@@ -15,32 +15,61 @@ BlockForward = Callable[['Block', torch.Tensor, int], torch.Tensor]
 
 def parallel_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     """Forward pass where attention and MLP run in parallel."""
-    if block.use_peri_ln:
-        ln_1 = block.ln_1(x)
-        attn_out = block.out_ln_attn(block.attn(ln_1, iter_num))
-        mlp_out = block.out_ln_mlp(block.mlp(ln_1, iter_num))
-        x = x + attn_out + mlp_out
-    elif block.use_post_ln:
-        x = block.ln_1(x + block.attn(x, iter_num) + block.mlp(x, iter_num))
-    else:  # pre-LN
-        ln_1 = block.ln_1(x)
-        x = x + block.attn(ln_1, iter_num) + block.mlp(ln_1, iter_num)
+    if block.use_pre_ln: # pre-LN
+        x_1 = block.pre_ln(x)
+    else:
+        x_1 = x
+
+    if block.use_peri_ln: # peri-LN
+        attn_out = block.out_ln_attn(block.attn(x_1, iter_num))
+        mlp_out = block.out_ln_mlp(block.mlp(x_1, iter_num))
+    else:
+        attn_out = block.attn(x_1, iter_num)
+        mlp_out = block.mlp(x_1, iter_num)
+
+    x = x + attn_out + mlp_out
+
+    if block.use_post_ln: # post-LN
+        x = block.post_ln(x)
+
     return x
 
 
 def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     """Attention followed by MLP."""
-    if block.use_peri_ln:
-        attn_out = block.out_ln_attn(block.attn(block.ln_1(x), iter_num))
-        x = x + attn_out
-        mlp_out = block.out_ln_mlp(block.mlp(block.ln_2(x), iter_num))
-        x = x + mlp_out
-    elif block.use_post_ln:
-        x = block.ln_1(x + block.attn(x, iter_num))
-        x = block.ln_2(x + block.mlp(x, iter_num))
-    else:  # pre-LN
-        x = x + block.attn(block.ln_1(x), iter_num)
-        x = x + block.mlp(block.ln_2(x), iter_num)
+
+    # Attn
+    if block.use_pre_ln: # pre-LN Attn
+        x_1 = block.pre_ln_attn(x)
+    else:
+        x_1 = x
+
+    if block.use_peri_ln: # peri-LN Attn
+        attn_out = block.out_ln_attn(block.attn(x_1, iter_num))
+    else:
+        attn_out = block.attn(x_1, iter_num)
+
+    x = attn_out + x
+
+    if block.use_post_ln: # post-LN Attn
+        x = block.post_ln_attn(x)
+
+    # MLP
+    if block.use_pre_ln: # pre-LN MLP
+        x_2 = block.pre_ln_mlp(x)
+    else:
+        x_2 = x
+
+    if block.use_peri_ln: # peri-LN MLP
+        mlp_out = block.out_ln_mlp(block.mlp(x_2, iter_num))
+    else:
+        mlp_out = block.mlp(x_2, iter_num)
+
+    x = mlp_out + x
+
+    if block.use_post_ln: # post-LN MLP
+        x = block.post_ln_mlp(x)
+
     return x
 
 
@@ -57,17 +86,37 @@ class Block(nn.Module):
         super().__init__()
 
         norm_cls = norm_dictionary[config.norm_variant_attn]
-        self.ln_1 = norm_cls(config)
-        if not config.use_parallel_mlp:
-            self.ln_2 = norm_cls(config)
 
+        # Pre-Norm
+        if config.use_pre_ln:
+            if config.use_parallel_mlp:
+                # parallel uses 1 less pre ln
+                self.pre_ln = norm_cls(config)
+            else:
+                self.pre_ln_attn = norm_cls(config)
+                self.pre_ln_mlp = norm_cls(config)
+
+        # Post-Norm
+        if config.use_post_ln:
+            if config.use_parallel_mlp:
+                # parallel uses 1 less post ln
+                self.post_ln = norm_cls(config)
+            else:
+                self.post_ln_attn = norm_cls(config)
+                self.post_ln_mlp = norm_cls(config)
+
+        # Pero-LN
         if config.use_peri_ln:
             self.out_ln_attn = norm_cls(config)
             self.out_ln_mlp = norm_cls(config)
 
+
+        self.use_pre_ln  = config.use_pre_ln
         self.use_post_ln = config.use_post_ln
         self.use_peri_ln = config.use_peri_ln
+
         self.use_parallel_mlp = config.use_parallel_mlp
+
         self.use_gradient_checkpointing = config.use_gradient_checkpointing
 
         variant = "parallel_mlp" if self.use_parallel_mlp else "attn_then_mlp"
