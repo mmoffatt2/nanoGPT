@@ -2,10 +2,11 @@
 ---
 
 # base hyperparameters
-max_iters: [10000]
-n_layer: [5]
-n_head: [5]
-n_embd: [320]
+max_iters: [20000]
+n_layer: [6]
+n_head: [6]
+n_embd: [384]
+eval_interval: [500]
 block_size: [256]
 device: ["cuda"]
 dataset: ["minipile"]
@@ -24,15 +25,16 @@ compute_model_stats: [true]
 # VARIATIONS
 
 # floating point
-dtype: ["bfloat16", "float16"]
+dtype: ["float16"]
 
 # compilation tests
-compile: [true, false]
+compile: [true]
 
 # variation tests
 use_parallel_mlp: [true, false]
+use_pre_ln:  [true, false]
 use_peri_ln: [true, false]
 use_post_ln: [true, false]
 
 # checkpointing tests
-use_gradient_checkpointing: [true, false]
+# use_gradient_checkpointing: [true, false]
