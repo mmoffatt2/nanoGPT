@@ -583,8 +583,7 @@ class Trainer:
 
             start = random.randint(0, len(data) - self.args.max_sample_tokens)
             ids = data[start : start + self.args.max_sample_tokens].astype(int)
-            text = decode_fn(ids.tolist())        f"at {datetime.datetime.now().isoformat(timespec='seconds')}"
-
+            text = decode_fn(ids.tolist())
             from benchmarks import run_all
 
             metrics = run_all(text)
@@ -715,11 +714,11 @@ class Trainer:
                 x = torch.stack([
                     torch.from_numpy(data[i : i+self.args.block_size].astype(np.int64))
                     for i in ix
-                ])
+                    ])
                 y = torch.stack([
                     torch.from_numpy(data[i+1 : i+1+self.args.block_size].astype(np.int64))
                     for i in ix
-                ])
+                    ])
                 # Move to device
                 if self.device_type == 'cuda':
                     x = x.pin_memory().to(self.device, non_blocking=True)
@@ -898,11 +897,11 @@ class Trainer:
                             logits, loss = self.model(X, Y, iter_num=self.iter_num, dataset_idx=idx if self.args.multidataset_wte else None)
                         dataset_losses[split][k] = loss.item()
                 out['datasets'][dataset] = {
-                    'train': dataset_losses['train'].mean(),
-                    'train_std': dataset_losses['train'].std(),
-                    'val': dataset_losses['val'].mean(),
-                    'val_std': dataset_losses['val'].std(),
-                }
+                        'train': dataset_losses['train'].mean(),
+                        'train_std': dataset_losses['train'].std(),
+                        'val': dataset_losses['val'].mean(),
+                        'val_std': dataset_losses['val'].std(),
+                        }
             out['val'] = out['datasets'][self.args.dataset]['val']
             out['val_std'] = out['datasets'][self.args.dataset]['val_std']
             out['train'] = out['datasets'][self.args.dataset]['train']
@@ -961,11 +960,11 @@ class Trainer:
             X_stat, Y_stat, _ = self.get_batch('val')
             # ── Run heavy ops on the selected device (GPU keeps host‑RAM flat) ──
             act_stats,  overall_act  = compute_activation_stats(
-                self.model, X_stat, Y_stat, self.iter_num, device=self.stats_device
-            )
+                    self.model, X_stat, Y_stat, self.iter_num, device=self.stats_device
+                    )
             weight_stats, overall_wt = compute_weight_stats(
-                self.model, device=self.stats_device
-            )
+                    self.model, device=self.stats_device
+                    )
 
             self.latest_overall_weight_stats     = overall_wt
             self.latest_overall_activation_stats = overall_act
@@ -977,36 +976,36 @@ class Trainer:
 
         if self.args.tensorboard_log and self.compute_model_stats:
             self.writer.add_scalars(
-                "model_stats",
-                {
-                    "weight_stdev": overall_wt['stdev'],
-                    "weight_kurtosis": overall_wt['kurtosis'],
-                    "weight_max": overall_wt['max'],
-                    "weight_min": overall_wt['min'],
-                    "weight_abs_max": overall_wt['abs_max'],
-                    "activation_stdev": overall_act['stdev'],
-                    "activation_kurtosis": overall_act['kurtosis'],
-                    "activation_max": overall_act['max'],
-                    "activation_min": overall_act['min'],
-                    "activation_abs_max": overall_act['abs_max'],
-                },
-                self.iter_num,
-            )
+                    "model_stats",
+                    {
+                        "weight_stdev": overall_wt['stdev'],
+                        "weight_kurtosis": overall_wt['kurtosis'],
+                        "weight_max": overall_wt['max'],
+                        "weight_min": overall_wt['min'],
+                        "weight_abs_max": overall_wt['abs_max'],
+                        "activation_stdev": overall_act['stdev'],
+                        "activation_kurtosis": overall_act['kurtosis'],
+                        "activation_max": overall_act['max'],
+                        "activation_min": overall_act['min'],
+                        "activation_abs_max": overall_act['abs_max'],
+                        },
+                    self.iter_num,
+                    )
 
             # Log per-tensor stats grouped by statistic
             for stat_key in ["stdev", "kurtosis", "max", "min", "abs_max"]:
                 if weight_stats:
                     self.writer.add_scalars(
-                        f"weights/{stat_key}",
-                        {n: s[stat_key] for n, s in weight_stats.items()},
-                        self.iter_num,
-                    )
+                            f"weights/{stat_key}",
+                            {n: s[stat_key] for n, s in weight_stats.items()},
+                            self.iter_num,
+                            )
                 if act_stats:
                     self.writer.add_scalars(
-                        f"activations/{stat_key}",
-                        {n: s[stat_key] for n, s in act_stats.items()},
-                        self.iter_num,
-                    )
+                            f"activations/{stat_key}",
+                            {n: s[stat_key] for n, s in act_stats.items()},
+                            self.iter_num,
+                            )
 
         self.model.train()
         return out
@@ -1221,9 +1220,9 @@ class Trainer:
             if self.args.tensorboard_log:
                 sanitized_dataset = self.args.dataset.replace("/", "_")
                 csv_full_dir = (
-                    f"{self.args.csv_dir}/"
-                    f"{sanitized_dataset}_{self.args.tensorboard_run_name}"
-                )
+                        f"{self.args.csv_dir}/"
+                        f"{sanitized_dataset}_{self.args.tensorboard_run_name}"
+                        )
         os.makedirs(csv_full_dir, exist_ok=True)
         # Ensure the filename itself never contains path separators
         safe_csv_name = self.args.csv_name.replace("/", "_")
@@ -1319,29 +1318,29 @@ class Trainer:
         self.console = Console()
         # Create progress bar with ETA and remaining time display
         progress = Progress(
-            TextColumn("[bold white]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TimeRemainingColumn(compact=False),
-            TextColumn("-- [bold dark_cyan]BestIter:[/bold dark_cyan]{task.fields[best_iter]} [bold dark_cyan]BestValLoss:[/bold dark_cyan]{task.fields[best_val_loss]}"),
-            TextColumn("-- [bold purple3]ETA:[/bold purple3]{task.fields[eta]}"),
-            TextColumn("[bold purple3]Remaining:[/bold purple3]{task.fields[hour]}h{task.fields[min]}m"),
-            TextColumn("[bold purple3]total_est:[/bold purple3]{task.fields[total_hour]}h{task.fields[total_min]}m"),
-            console=self.console
-        )
+                TextColumn("[bold white]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(compact=False),
+                TextColumn("-- [bold dark_cyan]BestIter:[/bold dark_cyan]{task.fields[best_iter]} [bold dark_cyan]BestValLoss:[/bold dark_cyan]{task.fields[best_val_loss]}"),
+                TextColumn("-- [bold purple3]ETA:[/bold purple3]{task.fields[eta]}"),
+                TextColumn("[bold purple3]Remaining:[/bold purple3]{task.fields[hour]}h{task.fields[min]}m"),
+                TextColumn("[bold purple3]total_est:[/bold purple3]{task.fields[total_hour]}h{task.fields[total_min]}m"),
+                console=self.console
+                )
 
         with Live(Group(progress.get_renderable(), cli_text), console=self.console, refresh_per_second=10) as live:
             task_id = progress.add_task(
-                "[green]Training...",
-                total=((self.args.max_iters - self.iter_num) + self.evaluations_remaining * self.args.eval_iters),
-                eta=self.formatted_completion_eta,
-                total_hour=f"{int(self.total_time_est_ms // 3_600_000)}",
-                total_min=f"{int((self.total_time_est_ms // 60_000) % 60):02d}",
-                hour=f"{int((self.time_remaining_ms // (1000*3600)) % 24):02d}",
-                min=f"{int((self.time_remaining_ms // 60000) % 60):02d}",
-                best_val_loss=f"{self.best_val_loss:.3f}",
-                best_iter=f"{self.best_iter}",
-            )
+                    "[green]Training...",
+                    total=((self.args.max_iters - self.iter_num) + self.evaluations_remaining * self.args.eval_iters),
+                    eta=self.formatted_completion_eta,
+                    total_hour=f"{int(self.total_time_est_ms // 3_600_000)}",
+                    total_min=f"{int((self.total_time_est_ms // 60_000) % 60):02d}",
+                    hour=f"{int((self.time_remaining_ms // (1000*3600)) % 24):02d}",
+                    min=f"{int((self.time_remaining_ms // 60000) % 60):02d}",
+                    best_val_loss=f"{self.best_val_loss:.3f}",
+                    best_iter=f"{self.best_iter}",
+                    )
 
             while True:
                 if self.scheduler is not None:
@@ -1359,9 +1358,9 @@ class Trainer:
 
                     if self.device_type == 'cuda':
                         self.peak_gpu_usage = max(
-                            self.peak_gpu_usage,
-                            max_memory_allocated(self.device)
-                        )
+                                self.peak_gpu_usage,
+                                max_memory_allocated(self.device)
+                                )
 
                     self.vram_allocated = get_gpu_memory_info(info_type='used') if self.args.device != "cpu" else 0
                     if self.args.dataset_list is not None:
@@ -1387,7 +1386,7 @@ class Trainer:
                         # Print loss for each dataset if multiple datasets are used
                         # print(losses['datasets'])
                         # for dataset, dataset_losses in losses['datasets'].items():
-                        #     print(dataset, dataset_losses)
+                            #     print(dataset, dataset_losses)
                         for dataset, dataset_losses in losses['datasets'].items():
                             log_message=f"step {self.iter_num}: "
                             log_message+=f"{dataset:<20s}"
@@ -1442,24 +1441,24 @@ class Trainer:
                             with open(os.path.join(self.args.out_dir, 'best_val_loss_and_iter.txt'), "w") as best_loss_file:
                                 chance_ratio = self.model_args['vocab_size']/math.exp(self.best_val_loss.item())
                                 best_loss_file.write(
-                                    f"{self.best_val_loss.item()},"
-                                    f" {self.iter_num},"
-                                    f" {self.model.num_param},"
-                                    f" {chance_ratio:.3e},"
-                                    f" {chance_ratio/self.model.num_param:.3e},"
-                                    f" {peak_mb:.1f},"
-                                    f" {self.iter_latency_avg:.1f},"
-                                    f" {self.latest_overall_weight_stats['stdev']:.6f},"
-                                    f" {self.latest_overall_weight_stats['kurtosis']:.6f},"
-                                    f" {self.latest_overall_weight_stats['max']:.6f},"
-                                    f" {self.latest_overall_weight_stats['min']:.6f},"
-                                    f" {self.latest_overall_weight_stats['abs_max']:.6f},"
-                                    f" {self.latest_overall_activation_stats['stdev']:.6f},"
-                                    f" {self.latest_overall_activation_stats['kurtosis']:.6f},"
-                                    f" {self.latest_overall_activation_stats['max']:.6f},"
-                                    f" {self.latest_overall_activation_stats['min']:.6f},"
-                                    f" {self.latest_overall_activation_stats['abs_max']:.6f},"
-                                )
+                                        f"{self.best_val_loss.item()},"
+                                        f" {self.iter_num},"
+                                        f" {self.model.num_param},"
+                                        f" {chance_ratio:.3e},"
+                                        f" {chance_ratio/self.model.num_param:.3e},"
+                                        f" {peak_mb:.1f},"
+                                        f" {self.iter_latency_avg:.1f},"
+                                        f" {self.latest_overall_weight_stats['stdev']:.6f},"
+                                        f" {self.latest_overall_weight_stats['kurtosis']:.6f},"
+                                        f" {self.latest_overall_weight_stats['max']:.6f},"
+                                        f" {self.latest_overall_weight_stats['min']:.6f},"
+                                        f" {self.latest_overall_weight_stats['abs_max']:.6f},"
+                                        f" {self.latest_overall_activation_stats['stdev']:.6f},"
+                                        f" {self.latest_overall_activation_stats['kurtosis']:.6f},"
+                                        f" {self.latest_overall_activation_stats['max']:.6f},"
+                                        f" {self.latest_overall_activation_stats['min']:.6f},"
+                                        f" {self.latest_overall_activation_stats['abs_max']:.6f},"
+                                        )
                             # Reset early exit counter
                             num_steps_with_worse_loss = 0
                         if self.iter_num > 0:
@@ -1532,11 +1531,11 @@ class Trainer:
                         self.tokens_trained += tokens_trained_this_batch
 
                     # Compute epoch for logging:
-                    if self.args.dataset_list:
-                        current_epoch = self.tokens_trained_dict[current_dataset] / self.dataset_size_tokens[current_dataset]
-                        self.epochs_trained_dict[current_dataset] = current_epoch
-                    else:
-                        current_epoch = self.tokens_trained / self.dataset_size_tokens
+                        if self.args.dataset_list:
+                            current_epoch = self.tokens_trained_dict[current_dataset] / self.dataset_size_tokens[current_dataset]
+                            self.epochs_trained_dict[current_dataset] = current_epoch
+                        else:
+                            current_epoch = self.tokens_trained / self.dataset_size_tokens
 
                     self.scaler.scale(loss).backward()
 
@@ -1562,8 +1561,8 @@ class Trainer:
                 if isinstance(self.optimizer, ActRegularizedAdamW):
                     stat_key = getattr(self.args, "activation_stat", "stdev")
                     self.optimizer.set_activation_stat(
-                        self.latest_overall_activation_stats.get(stat_key, 0.0)
-                    )
+                            self.latest_overall_activation_stats.get(stat_key, 0.0)
+                            )
 
                 self.scaler.step(self.optimizer)
                 self.scaler.update()
@@ -1582,11 +1581,11 @@ class Trainer:
 
                 # Estimate ETA
                 eta_update: ETAUpdate = self.eta.update(
-                    iter_num=self.iter_num,
-                    now=t1,
-                    dt=dt,
-                    is_eval_boundary=(self.iter_num % self.args.eval_interval == 0),
-                )
+                        iter_num=self.iter_num,
+                        now=t1,
+                        dt=dt,
+                        is_eval_boundary=(self.iter_num % self.args.eval_interval == 0),
+                        )
 
                 progress_advance = eta_update.progress_advance
                 self.iter_latency_avg = eta_update.iter_latency_avg
@@ -1676,7 +1675,7 @@ class Trainer:
                         min=f"{int((self.time_remaining_ms // 60_000) % 60):02d}",
                         best_val_loss=f"{self.best_val_loss:.3f}",
                         best_iter=f"{self.best_iter}",
-                )
+                        )
                 live.update(Group(progress.get_renderable(), cli_text))
 
                 # End of training actions
