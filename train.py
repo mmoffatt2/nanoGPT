@@ -1279,6 +1279,8 @@ class Trainer:
         return abbr
 
     def save_checkpoint(self, filename):
+        if self.args.never_save_checkpoint:
+            return
         checkpoint = {
                 'model': self.raw_model.state_dict(),
                 'optimizer': self.optimizer.state_dict() if self.optimizer else None,
@@ -1425,7 +1427,8 @@ class Trainer:
                             print("Exiting with nan")
                             file.write(str(self.iter_num))
 
-                    if self.args.save_major_ckpt_interval is not None:
+                    if (not self.args.never_save_checkpoint and 
+                        self.args.save_major_ckpt_interval is not None):
                         if self.iter_num % self.args.save_major_ckpt_interval == 0:
                             major_ckpt_name = str(self.iter_num) +'.pt'
                             # Save major checkpoint
@@ -1461,7 +1464,7 @@ class Trainer:
                                         )
                             # Reset early exit counter
                             num_steps_with_worse_loss = 0
-                        if self.iter_num > 0:
+                        if self.iter_num > 0 and not self.args.never_save_checkpoint:
                             print(f"saving checkpoint to {self.args.out_dir}")
                             # Save checkpoint
                             self.save_checkpoint('ckpt.pt')
@@ -1682,9 +1685,9 @@ class Trainer:
                 if self.iter_num > self.args.max_iters:
                     print(self.best_val_loss, self.best_iter)
                     if self.args.only_save_checkpoint_at_end:
-
-                        self.save_checkpoint('ckpt.pt')
-                        print(f"Saved checkpoint to {self.args.out_dir}")
+                        if not self.args.never_save_checkpoint:
+                            self.save_checkpoint('ckpt.pt')
+                            print(f"Saved checkpoint to {self.args.out_dir}")
 
                         # Sample if set
                         if self.args.max_sample_tokens:
