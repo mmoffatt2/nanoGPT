@@ -59,6 +59,8 @@ def parse_args():
     training_group.add_argument('--sample_each_eval', default=False, action=argparse.BooleanOptionalAction, help="Produce sample even if the validation loss did not improve. Allows for testing what overtraining looks like.")
     training_group.add_argument('--sample_start_tokens', default='\n', type=str)
     training_group.add_argument('--sample_only', default=False, action=argparse.BooleanOptionalAction, help="Run only the sampling process and exit")
+    training_group.add_argument('--dataset_benchmarks', default=False, action=argparse.BooleanOptionalAction, help="Run dataset benchmark metrics on a random slice after each validation")
+    training_group.add_argument('--sample_metrics', default=False, action=argparse.BooleanOptionalAction, help="Display sample metrics like spelling correctness during sampling")
 
     # Checkpoint args
     training_group.add_argument('--save_major_ckpt_interval', default=None, type=int, help="Interval for saving major checkpoints.")
@@ -88,6 +90,8 @@ def parse_args():
     # Multicontext Training Dataset args
     model_group.add_argument('--multicontext', default=False, action=argparse.BooleanOptionalAction,
                                     help="Enable multi-context training on multiple simultaneous datasets")
+    model_group.add_argument('--multidataset_wte', default=False, action=argparse.BooleanOptionalAction,
+                                    help='Use separate token embeddings and lm heads per dataset when training_mode is multidataset')
     training_group.add_argument('--multicontext_datasets', default=None, nargs='+', type=str,
                                     help="List of datasets to train on in multi-context mode (e.g., --multicontext_datasets shakespeare wikitext103 openwebtext)")
     model_group.add_argument('--vocab_sizes', default=None, nargs='+', type=int,
@@ -356,7 +360,9 @@ def parse_args():
     model_group.add_argument('--n_embd_wte_scale_tying', default=True, action=argparse.BooleanOptionalAction, help="Enable weight tying for scale up and scale down matrices, only has effects if n_embd_wte is not 'None'.")
     model_group.add_argument('--wte_weight_tying', default=True, action=argparse.BooleanOptionalAction, help="Enable weight tying for non-factorized wte")
     model_group.add_argument('--dropout', default=0.0, type=float)
-    model_group.add_argument('--use_post_ln', default=False, action=argparse.BooleanOptionalAction)
+    model_group.add_argument('--use_pre_ln', default=True,   action=argparse.BooleanOptionalAction, help="apply before any attn or mlp")
+    model_group.add_argument('--use_peri_ln', default=False, action=argparse.BooleanOptionalAction, help="apply directly after each attn and mlp")
+    model_group.add_argument('--use_post_ln', default=False, action=argparse.BooleanOptionalAction, help="apply after recombining the residual")
     model_group.add_argument('--window_size', default=None, type=int, help="Sliding window size, note this cannot be greater than block size")
     model_group.add_argument('--gate', default=False, action=argparse.BooleanOptionalAction, help="option for gated attention see https://arxiv.org/abs/2306.12929")
     model_group.add_argument('--use_moe', default=False,  action=argparse.BooleanOptionalAction, help="option for Mixture of Experts (MoE) architecture")
@@ -414,7 +420,6 @@ def parse_args():
     model_group.add_argument("--mlp_variant", type=str, default="mlp", choices=mlp_variants, help="MLP variation type")
     model_group.add_argument("--mlp_expansion_factor", type=int, default=4, help="If MLP like variant is used, set the expansion factor for the linear transformations, default is 4.")
     model_group.add_argument("--mlp_size", type=int, default=None, help="If not None, is used instead of mlp_expansion_factor")
-    model_group.add_argument('--mlp_res', default=False, action=argparse.BooleanOptionalAction)
 
     ## KAN Options
     model_group.add_argument("--kan_poly_order", type=int, default=3, help="Order of KAN non-linearity")
@@ -1001,6 +1006,14 @@ def parse_args():
             choices=['cpu', 'gpu'],
             help="Where to aggregate weight / activation statistics. "
             "'gpu' avoids host‑RAM spikes; 'cpu' saves VRAM."
+            )
+
+    training_group.add_argument(
+            '--print_model_stats_table',
+            type=str,
+            default=None,
+            metavar='CSV_PATH',
+            help='If set, also save the printed model statistics table to this CSV file.'
             )
 
     ## Export Model graph

@@ -40,6 +40,7 @@ Hardware Related
   * [Start Exploration](#start-exploration)
   * [Inspect and Monitor Best Val Losses](#inspect-and-monitor-best-val-losses)
   * [Start Tensorboard Logging](#start-tensorboard-logging)
+  * [Model Stats Table](#model-stats-table)
   * [Troubleshooting](#troubleshooting)
   * [Creating New Features and Exploration Scripts](#creating-new-features-and-exploration-scripts)
 * [Contributing](#contributing)
@@ -206,9 +207,31 @@ run a second tensorboard, use the script and specify a different port e.g. 6007:
 source ./logging/start_tensorboard.sh 6007
 ```
 
+## Model Stats Table
+
+The training script can output a per‑tensor statistics table to a CSV file with
+``--print_model_stats_table``. A helper script then visualizes the table or
+compares two runs with colour‑coded deltas.
+
+```bash
+python3 train.py --print_model_stats_table run1_stats.csv
+python3 train.py --optimizer adamw --print_model_stats_table run2_stats.csv
+python3 view_model_stats.py run1_stats.csv run2_stats.csv
+```
+
+See [documentation/Model_Stats_Table.md](documentation/Model_Stats_Table.md)
+for more details.
+
 ## TODO Section:
 
 TODO: Add links and descriptions to other Readme's and Demos.
+
+## Normalization Options
+
+The training CLI now supports `--use_peri_ln` for experimenting with
+*Peri-LN*, a normalization strategy that applies layer normalization
+around each sublayer (before and after). This can be combined with the
+existing `--use_post_ln` flag for Post-LN training.
 
 ## Contributing
 

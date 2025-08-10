@@ -29,6 +29,7 @@ from variations.model_variations import model_variation_dictionary
 
 import lm_eval
 from benchmarks.gpt_lm_eval_wrapper import NanoGPTLM
+from benchmarks import run_all
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Inference from trained models")
@@ -413,6 +414,9 @@ def sample_with_existing_model(
     iter_num: Optional[int] = None,
     best_val_loss: Optional[float] = None,
     run_name: Optional[str] = None,
+    writer: Optional[object] = None,
+    dataset_idx: Optional[int] = None,
+    console: Console | None = None,
 ):
     """
     Generate text from an already-loaded GPT model.
@@ -425,9 +429,11 @@ def sample_with_existing_model(
         • list  – run once per k in the list (duplicates filtered).
     colorize_mode :
         "minmax" | "softmax" | "softmax_top_k" | "dot_product" | **"rank"** | "all"
+    writer : torch.utils.tensorboard.SummaryWriter | None
+        When provided, dataset metrics for each top-k sample will be logged to TensorBoard.
     """
 
-    console = Console()
+    console = console or Console()
 
     # Determine sampling strategy. Softmax threshold overrides top_k.
     if args.softmax_threshold is not None:
@@ -472,7 +478,7 @@ def sample_with_existing_model(
                     else:
                         model.set_lsv_mode(1)
 
-                    print(f"[green]LSV[/green]  idx={sample_idx % args.lsv_size} "
+                    console.print(f"[green]LSV[/green]  idx={sample_idx % args.lsv_size} "
                           f"scale={args.lsv_scaling_factor} "
                           f"mixture={args.lsv_mixture}")
             # ------------- END LSV per-sample section -------------------
@@ -495,7 +501,7 @@ def sample_with_existing_model(
                         else x[:, -model.config.block_size :]
                     )
 
-                    model_logits, _ = model(idx_cond)
+                    model_logits, _ = model(idx_cond, dataset_idx=dataset_idx)
                     raw_logits_row = model_logits[:, -1, :]      # Raw logits from model
 
                     # --- Apply Cosine Similarity Penalty (if enabled) ---
@@ -616,6 +622,17 @@ def sample_with_existing_model(
             plain_text = decode(x[0].tolist())
             if token_boundary is not None:
                 plain_text = plain_text.replace(token_boundary, " ")
+
+            if args and getattr(args, "sample_metrics", False):
+                metrics = run_all(plain_text)
+                metric_str = ", ".join(f"{k}={v:.3f}" for k, v in metrics.items())
+                console.print(
+                    f"\n[bold magenta]Metrics ({k_tag}, sample {sample_idx+1}):[/bold magenta] {metric_str}"
+                )
+                if writer is not None and getattr(args, "tensorboard_log", False):
+                    for mk, mv in metrics.items():
+                        # group top-k runs on a single chart per metric
+                        writer.add_scalars(f"sample_metrics/{mk}", {k_tag: mv}, iter_num or 0)
 
             # ---------- colourised outputs ----------------------------------
             if colorize_output:
@@ -742,7 +759,7 @@ def calculate_validation_loss(model, val_data, block_size, eval_iters, device, d
             X, Y = get_batch(val_data,  block_size, device)
             with torch.amp.autocast(device_type=device, dtype=dtype):
                 start = time.perf_counter()
-                logits, loss = model(X, Y)
+                logits, loss = model(X, Y, dataset_idx=dataset_idx)
                 end = time.perf_counter()
                 total_time += (end - start)
             losses.append(loss.item())
@@ -1045,7 +1062,7 @@ def main():
             with ctx:
                 block_size = args.block_size if args.block_size else model.config.block_size
                 idx_cond = x if x.size(1) <= block_size else x[:, -block_size:]
-                logits, _ = model(idx_cond)
+                logits, _ = model(idx_cond, dataset_idx=dataset_idx)
         print(f"Obtained vector saved to {args.save_avg_vector}")
 
     if args.interactive:
@@ -1192,6 +1209,7 @@ def main():
                 out_dir=out_dir,
                 sample_file=args.sample_file,
                 args=args,
+                dataset_idx=0,
                 )
 
 if __name__ == "__main__":
