@@ -33,7 +33,6 @@ fi
 
 pushd "${out_dir}"
 wget --header="Authorization: Bearer ${HF_TOKEN}" -nc -O "ja_anime_ipa.json" "${url}/resolve/main/ja_anime_ipa.json?download=true" || true
-wget --header="Authorization: Bearer ${HF_TOKEN}" -nc -O "ja_anime_ipa_nsfw.json" "${url}/resolve/main/ja_anime_ipa_nsfw.json?download=true" || true
 wget --header="Authorization: Bearer ${HF_TOKEN}" -nc -O "ja_anime_ipa_sfw.json" "${url}/resolve/main/ja_anime_ipa_sfw.json?download=true" || true
 wget --header="Authorization: Bearer ${HF_TOKEN}" -nc -O "ja_ipa.json" "${url}/resolve/main/ja_ipa.json?download=true" || true
 
