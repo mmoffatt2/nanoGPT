@@ -33,3 +33,5 @@ python3 train.py \
   --max_sample_tokens 256 \
   --top_k 1 10 \
   --colorize_mode minmax
+
+popd
