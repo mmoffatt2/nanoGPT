@@ -1,4 +1,5 @@
 # !/bin/bash
+# data/snac_cvzh/get_text.sh
 
 # Set strict error handling
 set -xe
