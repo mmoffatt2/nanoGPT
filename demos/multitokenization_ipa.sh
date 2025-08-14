@@ -1,5 +1,5 @@
 #!/bin/bash
-# demos/multidataset_multitokenization.sh
+# demos/multitokenization_ipa.sh
 
 # Get current script directory
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
