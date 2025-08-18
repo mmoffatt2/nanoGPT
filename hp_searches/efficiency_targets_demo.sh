@@ -20,7 +20,8 @@ for target in params vram iter; do
     16 \
     --random_iterations 1 \
     --iterations 1 \
-    --num_iterations 100 \
+    --num_iterations 10 \
+    --efficiency_target "${target}" \
     --results_file "efficiency_target_${target}_demo.yaml"
   done
 
