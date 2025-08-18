@@ -1328,6 +1328,8 @@ class Trainer:
                 TextColumn("-- [bold purple3]ETA:[/bold purple3]{task.fields[eta]}"),
                 TextColumn("[bold purple3]Remaining:[/bold purple3]{task.fields[hour]}h{task.fields[min]}m"),
                 TextColumn("[bold purple3]total_est:[/bold purple3]{task.fields[total_hour]}h{task.fields[total_min]}m"),
+                TextColumn("-- [bold dark_magenta]iter_latency:[/bold dark_magenta]{task.fields[iter_latency]}ms"),
+                TextColumn("[bold dark_magenta]peak_gpu_mb:[/bold dark_magenta]{task.fields[peak_gpu_mb]}MB"),
                 console=self.console
                 )
 
@@ -1342,6 +1344,8 @@ class Trainer:
                     min=f"{int((self.time_remaining_ms // 60000) % 60):02d}",
                     best_val_loss=f"{self.best_val_loss:.3f}",
                     best_iter=f"{self.best_iter}",
+                    iter_latency=f"{self.iter_latency_avg:.1f}",
+                    peak_gpu_mb=f"{self.peak_gpu_usage / (1024 ** 2):.1f}",
                     )
 
             while True:
@@ -1678,6 +1682,8 @@ class Trainer:
                         min=f"{int((self.time_remaining_ms // 60_000) % 60):02d}",
                         best_val_loss=f"{self.best_val_loss:.3f}",
                         best_iter=f"{self.best_iter}",
+                        iter_latency=f"{self.iter_latency_avg:.1f}",
+                        peak_gpu_mb=f"{self.peak_gpu_usage / (1024 ** 2):.1f}",
                         )
                 live.update(Group(progress.get_renderable(), cli_text))
 
