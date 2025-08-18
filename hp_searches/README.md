@@ -61,6 +61,7 @@ python3 hyperparam_search.py \
   --random_iterations 1 \
   --iterations 1 \
   --num_iterations 20000 \
+  --efficiency_target params \
   --override max_iters=20000 batch_size=64 \
   --results_file results.yaml
 ```
@@ -76,6 +77,9 @@ noise.
     overrides to for example increase the max_iters, and to unblock the model
     when delta score gets too close to noise levels)
 - `results_file` where to store results for viewing with `view_hp_log.py`
+- `efficiency_target` chooses the cost metric for efficiency: `params`
+  (default), `vram` for peak GPU memory, or `iter` for average iteration
+  latency.
 
 
 1. Run bash script from main directory
