@@ -1,0 +1,18 @@
+# hp_searches/efficiency_targets_demo.yaml
+# Minimal configuration for exercising hyperparameter search efficiency targets
+
+# static
+dataset: "shakespeare_char"
+compile: False
+max_iters: 10
+eval_interval: 10
+batch_size: 32
+block_size: 64
+
+# changeable things
+n_layer: 1
+n_head: 1
+n_embd: 32
+mlp_size: 64
+n_qk_head_dim: 32
+n_v_head_dim: 32

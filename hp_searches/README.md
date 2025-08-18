@@ -76,8 +76,8 @@ noise.
     settings for any hp_search already started (just stop and resume with these
     overrides to for example increase the max_iters, and to unblock the model
     when delta score gets too close to noise levels)
-- `results_file` where to store results for viewing with `view_hp_log.py`
-- `efficiency_target` chooses the cost metric for efficiency: `params`
+ - `results_file` where to store results for viewing with `view_hp_log.py`
+  - `efficiency_target` chooses the cost metric for efficiency: `params`
   (default), `vram` for peak GPU memory, or `iter` for average iteration
   latency.
 
@@ -87,6 +87,10 @@ noise.
 ```bash
 bash ./hp_searches/lobo_attnhead_search.sh
 ```
+
+To quickly exercise the three efficiency metrics, see
+`hp_searches/test_efficiency_targets.sh` which runs a tiny search using
+the accompanying `efficiency_targets_demo.yaml` baseline.
 
 1. View with `view_hp_log.py`
 
