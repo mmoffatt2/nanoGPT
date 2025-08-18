@@ -8,5 +8,6 @@ python hyperparam_search.py \
   --random_iterations 5 \
   --iterations 1 \
   --num_iterations 20 \
+  --efficiency_target params \
   --results_file random_lhem_out.yaml
 
