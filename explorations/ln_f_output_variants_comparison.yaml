@@ -14,15 +14,16 @@ parameter_groups:
     ln_f_input_mixer_variant: ["decoder"]
 
 # base hyperparameters
-block_size: [512]
+block_size: [256]
 n_layer: [12]
-n_head: [12]
-n_embd: [768]
+n_head: [6]
+n_embd: [384]
 
 # training configuration
 dataset: ["minipile"]
 max_iters: 10000
 lr_decay_iters: 10000
+lr_scheduler: "cosine"
 warmup_iters: 1000
 eval_interval: 10000
 eta_variant: ["iteration"]
