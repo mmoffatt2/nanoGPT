@@ -240,9 +240,20 @@ This repo is under active development and accepting PR's, please see the
 See the [Contributing_Features.md](Contributing_Features.md) for details on how
 to add new features and explorations.
 
-## Acknowledgements
+## Citation
 
-- Original nanoGPT Repo
-- NanoGPT Discord Channel [![](https://dcbadge.vercel.app/api/server/3zy8kqD9Cp?compact=true&style=flat)](https://discord.gg/3zy8kqD9Cp)
-- [Zero To Hero series](https://karpathy.ai/zero-to-hero.html)
-- [GPT video](https://www.youtube.com/watch?v=kCc8FmEb1nY)
+This work extends Andrej Karpathy's foundational
+[nanoGPT](https://github.com/karpathy/nanoGPT). We ask that citations cite both
+projects.
+
+To cite **ReaLLM-Forge**, please use this BibTeX entry:
+
+```bibtex
+@software{ReaLLM-Forge,
+  author = {{ReaLLMASIC} and {Contributors}},
+  title = {{ReaLLM-Forge: A Framework for Hardware-Aware LLM Exploration}},
+  url = {https://github.com/ReaLLMASIC/ReaLLM-Forge},
+  year = {2025},
+}
+```
+
