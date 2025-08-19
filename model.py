@@ -94,6 +94,13 @@ class GPT(nn.Module):
         # Final-logit softcapping
         self.final_logit_softcapping = config.final_logit_softcapping
 
+        # Optionally mix outputs of all blocks before final layer norm
+        self.use_ln_f_input_mixer = config.use_ln_f_input_mixer
+        if self.use_ln_f_input_mixer:
+            mix_init = torch.zeros(config.n_layer + 1)
+            mix_init[-1] = 1.0
+            self.ln_f_input_weights = nn.Parameter(mix_init)
+
         # Use the new SharedParamGroupCreator for MLP and Attn layers
         spg_creator = SharedParamGroupCreator(config)
         shared_mlp_array = spg_creator.create_shared_param_group("mlp")
@@ -403,6 +410,9 @@ class GPT(nn.Module):
             if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
                 x = self.lsv_matrix(x)
 
+            if self.use_ln_f_input_mixer:
+                layer_outputs = [x]
+
             layer_idx = 1
             for block in self.transformer.h:
                 x = block(x, iter_num)
@@ -429,7 +439,15 @@ class GPT(nn.Module):
                         and layer_idx == self.config.obtain_vector_at_layer_idx):
                     x = self.obtain_vector_from_layer_output(x)
 
+                if self.use_ln_f_input_mixer:
+                    layer_outputs.append(x)
+
                 layer_idx += 1
+
+            if self.use_ln_f_input_mixer:
+                stack = torch.stack(layer_outputs, dim=0)
+                weights = self.ln_f_input_weights.view(-1, 1, 1, 1)
+                x = (weights * stack).sum(dim=0)
 
             # 3. Final layer norm
             x = self.transformer.ln_f(x)
@@ -518,6 +536,9 @@ class GPT(nn.Module):
             if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
                 x = self.lsv_matrix(x)
 
+            if self.use_ln_f_input_mixer:
+                layer_outputs = [x]
+
             layer_idx = 1
             for block in self.transformer.h:
                 # Propagate tokens through layers
@@ -547,7 +568,15 @@ class GPT(nn.Module):
                     print(layer_idx, self.config.obtain_vector_at_layer_idx)
                     x = self.obtain_vector_from_layer_output(x)
 
+                if self.use_ln_f_input_mixer:
+                    layer_outputs.append(x)
+
                 layer_idx +=1
+
+            if self.use_ln_f_input_mixer:
+                stack = torch.stack(layer_outputs, dim=0)
+                weights = self.ln_f_input_weights.view(-1, 1, 1, 1)
+                x = (weights * stack).sum(dim=0)
 
             x = self.transformer.ln_f(x)
 
@@ -626,12 +655,22 @@ class GPT(nn.Module):
         if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
             x = self.lsv_matrix(x)
 
+        if self.use_ln_f_input_mixer:
+            layer_outputs = [x]
+
         layer_idx = 1
         for block in self.transformer.h:
             x = block(x, iter_num)
             if self.use_lsv and layer_idx == self.config.apply_lsv_at_layer_idx:
                 x = self.lsv_matrix(x)
+            if self.use_ln_f_input_mixer:
+                layer_outputs.append(x)
             layer_idx += 1
+
+        if self.use_ln_f_input_mixer:
+            stack = torch.stack(layer_outputs, dim=0)
+            weights = self.ln_f_input_weights.view(-1, 1, 1, 1)
+            x = (weights * stack).sum(dim=0)
 
         x = self.transformer.ln_f(x)
         if self.n_embd_wte:
