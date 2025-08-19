@@ -37,6 +37,7 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
+from variations.output_vector_variants import output_vector_variant_dict
 from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
 from quantization.quant_utils import set_variant, create_activation_buffers
 
@@ -97,9 +98,8 @@ class GPT(nn.Module):
         # Optionally mix outputs of all blocks before final layer norm
         self.use_ln_f_input_mixer = config.use_ln_f_input_mixer
         if self.use_ln_f_input_mixer:
-            mix_init = torch.zeros(config.n_layer + 1)
-            mix_init[-1] = 1.0
-            self.ln_f_input_weights = nn.Parameter(mix_init)
+            variant_cls = output_vector_variant_dict[config.ln_f_input_mixer_variant]
+            self.ln_f_mixer = variant_cls(config)
 
         # Use the new SharedParamGroupCreator for MLP and Attn layers
         spg_creator = SharedParamGroupCreator(config)
@@ -445,9 +445,7 @@ class GPT(nn.Module):
                 layer_idx += 1
 
             if self.use_ln_f_input_mixer:
-                stack = torch.stack(layer_outputs, dim=0)
-                weights = self.ln_f_input_weights.view(-1, 1, 1, 1)
-                x = (weights * stack).sum(dim=0)
+                x = self.ln_f_mixer(layer_outputs)
 
             # 3. Final layer norm
             x = self.transformer.ln_f(x)
@@ -574,9 +572,7 @@ class GPT(nn.Module):
                 layer_idx +=1
 
             if self.use_ln_f_input_mixer:
-                stack = torch.stack(layer_outputs, dim=0)
-                weights = self.ln_f_input_weights.view(-1, 1, 1, 1)
-                x = (weights * stack).sum(dim=0)
+                x = self.ln_f_mixer(layer_outputs)
 
             x = self.transformer.ln_f(x)
 
@@ -668,9 +664,7 @@ class GPT(nn.Module):
             layer_idx += 1
 
         if self.use_ln_f_input_mixer:
-            stack = torch.stack(layer_outputs, dim=0)
-            weights = self.ln_f_input_weights.view(-1, 1, 1, 1)
-            x = (weights * stack).sum(dim=0)
+            x = self.ln_f_mixer(layer_outputs)
 
         x = self.transformer.ln_f(x)
         if self.n_embd_wte:
