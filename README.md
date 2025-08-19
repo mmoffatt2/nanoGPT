@@ -243,8 +243,10 @@ to add new features and explorations.
 ## Citation
 
 This work extends Andrej Karpathy's foundational
-[nanoGPT](https://github.com/karpathy/nanoGPT). We ask that citations cite both
-projects.
+[nanoGPT](https://github.com/karpathy/nanoGPT), for which prior citation format can be found [here](
+https://github.com/karpathy/nanoGPT/issues/471).
+
+We ask that citations cite both projects.
 
 To cite **ReaLLM-Forge**, please use this BibTeX entry:
 
@@ -256,4 +258,3 @@ To cite **ReaLLM-Forge**, please use this BibTeX entry:
   year = {2025},
 }
 ```
-
