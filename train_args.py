@@ -435,6 +435,30 @@ def parse_args():
     model_group.add_argument('--shared_attn_sym', default=False, action=argparse.BooleanOptionalAction, help="symmetrical attention sharing")
     model_group.add_argument('--shared_attn_seq', default=1, type=int, help="Sequence length for cyclic sharing of attention layers")
 
+    ## Learned Confidence Residual Scaling
+    confidence_variants = ["zeros", "ones", "gaussian"]
+
+    ### Attn scaling
+    model_group.add_argument('--use_attn_resid_scaling', default=False, action=argparse.BooleanOptionalAction, help='Apply learned confidence scaling to attention outputs')
+    model_group.add_argument('--attn_confidence_variant', type=str, default='zeros', choices=confidence_variants, help='Initialization for attention residual scaling vector')
+
+    model_group.add_argument('--use_attn_resid_const', default=False, action=argparse.BooleanOptionalAction, help='Add constant term to attention residual scaling dot product')
+    model_group.add_argument('--attn_resid_const', type=float, default=0.0, help='Constant added to attention residual scaling dot product')
+    model_group.add_argument('--learn_attn_resid_const', default=False, action=argparse.BooleanOptionalAction, help='Learn the attention residual scaling constant')
+
+    ### MLP scaling
+    model_group.add_argument('--use_mlp_resid_scaling', default=False, action=argparse.BooleanOptionalAction, help='Apply learned confidence scaling to MLP outputs')
+    model_group.add_argument('--mlp_confidence_variant', type=str, default='zeros', choices=confidence_variants, help='Initialization for MLP residual scaling vector')
+
+    model_group.add_argument('--use_mlp_resid_const', default=False, action=argparse.BooleanOptionalAction, help='Add constant term to MLP residual scaling dot product')
+    model_group.add_argument('--mlp_resid_const', type=float, default=0.0, help='Constant added to MLP residual scaling dot product')
+    model_group.add_argument('--learn_mlp_resid_const', default=False, action=argparse.BooleanOptionalAction, help='Learn the MLP residual scaling constant')
+
+    ### Guassian style settings
+    model_group.add_argument('--resid_gaussian_mean_init', type=float, default=0.0, help='Gaussian residual init setting, mean value.')
+    model_group.add_argument('--resid_gaussian_mean_std', type=float, default=0.02, help='Gaussian residual init setting, standard deviation.')
+
+
     # NORM VARIATIONS
     norm_variations = [
             "krmsnorm",
