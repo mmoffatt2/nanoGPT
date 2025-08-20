@@ -467,9 +467,11 @@ def sample_with_existing_model(
             kl_divergences = [] # To store the impact of the cosine penalty
 
             if args is not None:
-                if args.use_lsv:
+                # This block handles LSV for standalone sampling. When called from train.py,
+                # lsv_size is not an arg, so we skip this to avoid an AttributeError and
+                # to respect the index already set by the trainer.
+                if args.use_lsv and hasattr(args, 'lsv_size'):
                     model.set_lsv_index(sample_idx % args.lsv_size)
-                    print("vector", sample_idx % args.lsv_size)
                     if args.lsv_scaling_factor is not None:
                         model.set_lsv_scaling_factor(args.lsv_scaling_factor)
                     if args.lsv_mixture is not None:
@@ -477,6 +479,7 @@ def sample_with_existing_model(
                         model.set_lsv_mixture(args.lsv_mixture)
                     else:
                         model.set_lsv_mode(1)
+
 
                     console.print(f"[green]LSV[/green]  idx={sample_idx % args.lsv_size} "
                           f"scale={args.lsv_scaling_factor} "
@@ -1129,9 +1132,11 @@ def main():
         block_size = args.block_size if args.block_size else model.config.block_size
         with torch.no_grad(), ctx:
             for k in range(args.num_samples):
-                if args.use_lsv:
-                    model.set_lsv_index(k % args.lsv_size)
-                    print("vector", k % args.lsv_size)
+                # This block handles LSV for standalone sampling. When called from train.py,
+                # lsv_size is not an arg, so we skip this to avoid an AttributeError and
+                # to respect the index already set by the trainer.
+                if args.use_lsv and hasattr(args, 'lsv_size'):
+                    model.set_lsv_index(sample_idx % args.lsv_size)
                     if args.lsv_scaling_factor is not None:
                         model.set_lsv_scaling_factor(args.lsv_scaling_factor)
                     if args.lsv_mixture is not None:
@@ -1139,6 +1144,7 @@ def main():
                         model.set_lsv_mixture(args.lsv_mixture)
                     else:
                         model.set_lsv_mode(1)
+
 
                 # We'll generate args.max_new_tokens total tokens
                 for step in range(args.max_new_tokens):
