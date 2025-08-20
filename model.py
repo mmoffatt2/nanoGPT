@@ -734,8 +734,6 @@ class GPT(nn.Module):
 
         # create a from-scratch initialized minGPT model
         model = GPT(config)
-        model_hf = GPT2LMHeadModel.from_pretrained(model_type)
-
         sd = model.state_dict()
         sd_keys = sd.keys()
         sd_keys = [k for k in sd_keys if not k.endswith('.attn.bias')] # discard this mask / buffer, not a param
@@ -749,42 +747,56 @@ class GPT(nn.Module):
         sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.masked_bias')] # ignore these, just a buffer
         sd_keys_hf = [k for k in sd_keys_hf if not k.endswith('.attn.bias')] # same, just the mask (buffer)
         transposed = ['attn.c_proj.weight', 'mlp.c_fc.weight', 'mlp.c_proj.weight']
-        # basically the openai checkpoints use a "Conv1D" module, but we only want to use a vanilla Linear
-        # this means that we have to transpose these weights when we import them
-        # NOTE: the assert below will fail because we split out the c_attn linears!
+
         # assert len(sd_keys_hf) == len(sd_keys), f"mismatched keys: {len(sd_keys_hf)} != {len(sd_keys)}"
         for key in sd_keys_hf:
+            # START FIX: Rename keys to match nanoGPT's convention
+            my_key = key
+            if 'ln_1' in my_key:
+                my_key = my_key.replace('ln_1', 'ln1')
+            if 'ln_2' in my_key:
+                my_key = my_key.replace('ln_2', 'ln2')
+            # END FIX
+
             if any(key.endswith(w) for w in transposed):
                 # special treatment for the Conv1D weights we need to transpose
-                assert sd_hf[key].shape[::-1] == sd[key].shape
+                assert sd_hf[key].shape[::-1] == sd[my_key].shape
                 with torch.no_grad():
-                    sd[key].copy_(sd_hf[key].t())
+                    sd[my_key].copy_(sd_hf[key].t())
             elif key.endswith('attn.c_attn.weight') or key.endswith('attn.c_attn.bias'):
                 # split into c_attn_q/k/v
-                q, k, v  = sd_hf[key].t().split(config.n_embd, dim=0)
-                q_key_str = key.replace("c_attn", "c_attn_q")
-                k_key_str = key.replace("c_attn", "c_attn_k")
-                v_key_str = key.replace("c_attn", "c_attn_v")
-                sd[q_key_str] = q
-                sd[k_key_str] = k
-                sd[v_key_str] = v
+                q, k, v  = sd_hf[key].split(config.n_embd, dim=-1) # Note: HF stores as (3 * n_embd, n_embd) for weights
+
+                # Adjust for bias shape if it exists
+                if key.endswith('.bias'):
+                    q_key_str = my_key.replace("c_attn", "c_attn_q")
+                    k_key_str = my_key.replace("c_attn", "c_attn_k")
+                    v_key_str = my_key.replace("c_attn", "c_attn_v")
+                    sd[q_key_str].copy_(q)
+                    sd[k_key_str].copy_(k)
+                    sd[v_key_str].copy_(v)
+                else: # it's a weight
+                    q, k, v = q.t(), k.t(), v.t() # Transpose weights
+                    q_key_str = my_key.replace("c_attn", "c_attn_q")
+                    k_key_str = my_key.replace("c_attn", "c_attn_k")
+                    v_key_str = my_key.replace("c_attn", "c_attn_v")
+                    sd[q_key_str].copy_(q)
+                    sd[k_key_str].copy_(k)
+                    sd[v_key_str].copy_(v)
             else:
                 # vanilla copy over the other parameters
-                print(key)
                 if config.n_embd_wte:
-                    if key == "transformer.wte.weight":
+                    if "wte" in key or "lm_head" in key:
                         continue
-                    if key == "lm_head.weight":
-                        continue
-
                 if not config.use_abs_pos_embeddings:
-                    if key == "transformer.wpe.weight":
+                    if "wpe" in key:
                         continue
 
-                assert sd_hf[key].shape == sd[key].shape
-                with torch.no_grad():
-                    print(key)
-                    sd[key].copy_(sd_hf[key])
+                # Ensure the key exists in your model before trying to copy
+                if my_key in sd:
+                    assert sd_hf[key].shape == sd[my_key].shape, f"Shape mismatch for key {my_key}: HF is {sd_hf[key].shape}, yours is {sd[my_key].shape}"
+                    with torch.no_grad():
+                        sd[my_key].copy_(sd_hf[key])
 
         return model
 
