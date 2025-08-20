@@ -8,6 +8,7 @@ import torch.utils.checkpoint as checkpoint
 from variations.attention_variations import attention_dictionary
 from variations.mlp_variations import get_mlp_instance
 from variations.norm_variations import norm_dictionary
+from variations.learned_confidence_variations import learned_confidence_dictionary
 
 # type alias for the forward function
 BlockForward = Callable[['Block', torch.Tensor, int], torch.Tensor]
@@ -26,6 +27,11 @@ def parallel_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     else:
         attn_out = block.attn(x_1, iter_num)
         mlp_out = block.mlp(x_1, iter_num)
+
+    if block.attn_resid_scaler is not None:
+        attn_out = block.attn_resid_scaler(attn_out)
+    if block.mlp_resid_scaler is not None:
+        mlp_out = block.mlp_resid_scaler(mlp_out)
 
     x = x + attn_out + mlp_out
 
@@ -49,6 +55,9 @@ def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor
     else:
         attn_out = block.attn(x_1, iter_num)
 
+    if block.attn_resid_scaler is not None:
+        attn_out = block.attn_resid_scaler(attn_out)
+
     x = attn_out + x
 
     if block.use_post_ln: # post-LN Attn
@@ -64,6 +73,9 @@ def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor
         mlp_out = block.out_ln_mlp(block.mlp(x_2, iter_num))
     else:
         mlp_out = block.mlp(x_2, iter_num)
+
+    if block.mlp_resid_scaler is not None:
+        mlp_out = block.mlp_resid_scaler(mlp_out)
 
     x = mlp_out + x
 
@@ -118,6 +130,17 @@ class Block(nn.Module):
         self.use_parallel_mlp = config.use_parallel_mlp
 
         self.use_gradient_checkpointing = config.use_gradient_checkpointing
+
+        if config.use_attn_resid_scaling:
+            cls = learned_confidence_dictionary[config.attn_confidence_variant]
+            self.attn_resid_scaler = cls(config, prefix="attn")
+        else:
+            self.attn_resid_scaler = None
+        if config.use_mlp_resid_scaling:
+            cls = learned_confidence_dictionary[config.mlp_confidence_variant]
+            self.mlp_resid_scaler = cls(config, prefix="mlp")
+        else:
+            self.mlp_resid_scaler = None
 
         variant = "parallel_mlp" if self.use_parallel_mlp else "attn_then_mlp"
         self.block_forward = block_forward_variations[variant]

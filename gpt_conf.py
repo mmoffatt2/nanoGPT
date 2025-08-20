@@ -312,6 +312,16 @@ class GPTConfig:
     use_post_ln: bool = False
     use_pre_ln: bool = True
     use_peri_ln: bool = False
+    use_attn_resid_scaling: bool = False
+    use_mlp_resid_scaling: bool = False
+    attn_confidence_variant: str = "zeros"
+    mlp_confidence_variant: str = "zeros"
+    use_attn_resid_const: bool = False
+    attn_resid_const: float = 0.0
+    learn_attn_resid_const: bool = False
+    use_mlp_resid_const: bool = False
+    mlp_resid_const: float = 0.0
+    learn_mlp_resid_const: bool = False
 
     # Layernorm Alternatives and Options
     norm_variant_attn: str = "rmsnorm"
