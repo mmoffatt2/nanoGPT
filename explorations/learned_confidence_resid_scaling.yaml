@@ -5,35 +5,25 @@ parameter_groups:
   - use_attn_resid_scaling: [false]
     use_mlp_resid_scaling: [false]
 
-  # Zeros init
+  # Zeros
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["zeros"]
     mlp_confidence_variant: ["zeros"]
 
-  # Ones init
-  - use_attn_resid_scaling: [true]
-    use_mlp_resid_scaling: [true]
-    attn_confidence_variant: ["ones"]
-    mlp_confidence_variant: ["ones"]
-
-  # Gaussian init
-  - use_attn_resid_scaling: [true]
-    use_mlp_resid_scaling: [true]
-    attn_confidence_variant: ["gaussian"]
-    mlp_confidence_variant: ["gaussian"]
-
-  # Zeros with constant
+  # Zeros with Constant
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["zeros"]
     mlp_confidence_variant: ["zeros"]
     use_attn_resid_const: [true]
-    attn_resid_const: [0.1]
     use_mlp_resid_const: [true]
-    mlp_resid_const: [0.1]
+    learn_attn_resid_const: [false]
+    learn_mlp_resid_const: [false]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
 
-  # Zeros with learned constant
+  # Zeros with Learnable Constant
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["zeros"]
@@ -42,18 +32,28 @@ parameter_groups:
     learn_attn_resid_const: [true]
     use_mlp_resid_const: [true]
     learn_mlp_resid_const: [true]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
 
-  # Ones with constant
+  # Ones with Constant
+  - use_attn_resid_scaling: [true]
+    use_mlp_resid_scaling: [true]
+    attn_confidence_variant: ["ones"]
+    mlp_confidence_variant: ["ones"]
+
+  # Ones with Constant
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["ones"]
     mlp_confidence_variant: ["ones"]
     use_attn_resid_const: [true]
-    attn_resid_const: [0.1]
     use_mlp_resid_const: [true]
-    mlp_resid_const: [0.1]
+    learn_attn_resid_const: [false]
+    learn_mlp_resid_const: [false]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
 
-  # Ones with learned constant
+  # Ones with Learnable Constant
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["ones"]
@@ -62,34 +62,60 @@ parameter_groups:
     learn_attn_resid_const: [true]
     use_mlp_resid_const: [true]
     learn_mlp_resid_const: [true]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
 
-  # Gaussian with constant
+  # Gaussian
+  - use_attn_resid_scaling: [true]
+    use_mlp_resid_scaling: [true]
+    attn_confidence_variant: ["gaussian"]
+    mlp_confidence_variant: ["gaussian"]
+    resid_guassian_mean_init: [0.0]
+    resid_guassian_std_init: [0.02]
+
+  # Gaussian with Constnat
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["gaussian"]
     mlp_confidence_variant: ["gaussian"]
     use_attn_resid_const: [true]
-    attn_resid_const: [0.1]
     use_mlp_resid_const: [true]
-    mlp_resid_const: [0.1]
+    learn_attn_resid_const: [false]
+    learn_mlp_resid_const: [false]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
+    resid_guassian_mean_init: [0.0]
+    resid_guassian_std_init: [0.02]
 
-  # Gaussian with learned constant
+  # Gaussian with Learnable Constant
   - use_attn_resid_scaling: [true]
     use_mlp_resid_scaling: [true]
     attn_confidence_variant: ["gaussian"]
     mlp_confidence_variant: ["gaussian"]
     use_attn_resid_const: [true]
+    use_mlp_resid_const: [true]
     learn_attn_resid_const: [true]
-    use_mlp_resid_const: [true]
     learn_mlp_resid_const: [true]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
+    resid_guassian_mean_init: [0.0]
+    resid_guassian_std_init: [0.02]
 
 # base hyperparameters
-max_iters: [2000]
+max_iters: [5000]
 n_layer: [6]
 n_head: [6]
 n_embd: [384]
 block_size: [256]
-dataset: ["shakespeare_char"]
+dataset: ["minipile"]
 device: ["cuda"]
-dtype: ["bfloat16"]
+dtype: ["float16"]
+
+# Position Encoding
+use_rotary_embeddings: [true]
+use_abs_pos_embeddings: [false]
+
+# Misc
+never_save_checkpoint: [true]
 compile: [true]
+

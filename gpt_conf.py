@@ -322,6 +322,8 @@ class GPTConfig:
     use_mlp_resid_const: bool = False
     mlp_resid_const: float = 0.0
     learn_mlp_resid_const: bool = False
+    resid_gaussian_mean_init: float = 0.0
+    resid_gaussian_mean_std: float = 0.02
 
     # Layernorm Alternatives and Options
     norm_variant_attn: str = "rmsnorm"

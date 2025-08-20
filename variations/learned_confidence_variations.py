@@ -1,10 +1,13 @@
 """Learned confidence scaling variations."""
+
 from __future__ import annotations
 import torch
 import torch.nn as nn
 
+
 class BaseLearnedConfidence(nn.Module):
     """Applies a learned vector dot product (and optional constant) to scale inputs."""
+
     def __init__(self, config, prefix: str, init_fn):
         super().__init__()
         # initialize scaling vector
@@ -28,17 +31,31 @@ class BaseLearnedConfidence(nn.Module):
             scale = scale + self.const
         return x * scale
 
+
 class ZerosLearnedConfidence(BaseLearnedConfidence):
     def __init__(self, config, prefix: str):
         super().__init__(config, prefix, lambda dim: torch.zeros(dim))
+
 
 class OnesLearnedConfidence(BaseLearnedConfidence):
     def __init__(self, config, prefix: str):
         super().__init__(config, prefix, lambda dim: torch.ones(dim))
 
+
 class GaussianLearnedConfidence(BaseLearnedConfidence):
     def __init__(self, config, prefix: str):
-        super().__init__(config, prefix, lambda dim: torch.randn(dim))
+        super().__init__(
+            config,
+            prefix,
+            lambda dim: (
+                torch.nn.init.normal_(
+                    torch.empty(dim),
+                    mean=config.resid_gaussian_mean_init,
+                    std=config.resid_gaussian_mean_std,
+                )
+            ),
+        )
+
 
 learned_confidence_dictionary = {
     "zeros": ZerosLearnedConfidence,
