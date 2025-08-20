@@ -1,26 +1,32 @@
 #!/bin/bash
+# demos/multitokenization_ipa.sh
 
+# Get current script directory
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
 
-# Learned Dataset Embedding
-## very small footprint, only an addition
-## applies best to layer 0
-bash data/shakepeare_char/get_dataset.sh
+# get into main directory
+pushd "$script_dir/../" > /dev/null
 
-pushd data/opus-100
+obtain and tokenize commonvoice_en
+pushd data/commonvoice_en
+bash get_ipa.sh
+popd
+
+obtain and tokenize minipile
+pushd data/snac_cven
 if [ ! -f "train.bin" ] || [ ! -f "val.bin" ] || [ ! -f "meta.pkl" ]; then
-  python3 get_dataset.py
-  prepare.py -t input.txt --method tiktoken
+  bash get_text.sh
 else
-  echo "train.bin, val,bin, and meta.pkl already found for opus-100"  
+  echo "train.bin val.bin and meta.pkl already found for minipile"
 fi
 popd
 
 python3 train.py \
   --training_mode multidataset \
   --multidataset_wte \
-  --dataset shakespeare_char \
-  --dataset_list  shakespeare_char opus-100 \
-  --dataset_sampling_probs 1 10  \
+  --dataset commonvoice_en \
+  --dataset_list  commonvoice_en snac_cven \
+  --dataset_sampling_probs 10 1  \
   --dataset_sampling_probs_final 1 1 \
   --dataset_sampling_probs_transition_method cosine \
   --dataset_interleaving \
@@ -37,7 +43,7 @@ python3 train.py \
   --no-use_abs_pos_embeddings \
   --max_sample_tokens 100 \
   --max_iters 10000 \
-  --warmup_iters 1000
+  --warmup_iters 1000 \
   --eval_interval 1000 \
   --sample_each_eval \
   --init_from "scratch" \
