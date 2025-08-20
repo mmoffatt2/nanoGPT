@@ -4,13 +4,17 @@
 # Learned Dataset Embedding
 ## very small footprint, only an addition
 ## applies best to layer 0
+bash data/shakepeare_char/get_dataset.sh
 
-# Learned Steering Vectors
-## Relatively small footprint, small mlp (FIRE inspired)
-## Tested on multiple layers, can work at layer 5
-## Finetunes very quickly (500 iterations finetuning for 124M GPT2)
-#  --dataset commonvoice_en \
-#  --dataset_list  commonvoice_en snac_cven \
+pushd data/opus-100
+if [ ! -f "train.bin" ] || [ ! -f "val.bin" ] || [ ! -f "meta.pkl" ]; then
+  python3 get_dataset.py
+  prepare.py -t input.txt --method tiktoken
+else
+  echo "train.bin, val,bin, and meta.pkl already found for opus-100"  
+fi
+popd
+
 python3 train.py \
   --training_mode multidataset \
   --multidataset_wte \
