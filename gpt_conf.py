@@ -59,6 +59,11 @@ class GPTConfig:
     attn_logit_softcapping: float | None = None
     final_logit_softcapping: float | None = None
 
+    # Final ln_f input mixing
+    use_ln_f_input_mixer: bool = False
+    ln_f_input_mixer_variant: str = "linear"
+    ln_f_mixer_top_k: int = 2
+
     # Learned Position Embeddings
     n_lpe: int = 0
     lpe_block_size: int = 1024

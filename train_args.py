@@ -374,6 +374,12 @@ def parse_args():
     model_group.add_argument('--use_flex_attn', default=None,  action=argparse.BooleanOptionalAction, help="option for using flex attention for sliding windows")
     model_group.add_argument('--attn_logit_softcapping', default=None, action=argparse.BooleanOptionalAction, help="option for softcapping attention (before masking)")
     model_group.add_argument('--final_logit_softcapping', default=None, action=argparse.BooleanOptionalAction, help="option for softcapping final logits")
+    model_group.add_argument('--use_ln_f_input_mixer', default=False, action=argparse.BooleanOptionalAction, help='blend outputs of all blocks before final layer norm')
+    model_group.add_argument('--ln_f_input_mixer_variant', default='linear', type=str,
+                             choices=['linear', 'router_top1', 'router_topk', 'decoder'],
+                             help='strategy for combining block outputs before ln_f')
+    model_group.add_argument('--ln_f_mixer_top_k', default=2, type=int,
+                             help='number of routes to mix when using router_topk')
 
     ## Manual Steering Vector Options
 

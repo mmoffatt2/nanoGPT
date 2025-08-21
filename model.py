@@ -37,6 +37,7 @@ from variations.position_encoding_variations import QuantizedEmbedding, RotaryEm
 from variations.activation_variations import activation_dictionary
 from variations.linear_variations import linear_dictionary
 from variations.router_variations import router_dictionary
+from variations.output_vector_variants import output_vector_variant_dict
 from quantization.quantize import quantize_dictionary, dequantize, fake_quantize_act
 from quantization.quant_utils import set_variant, create_activation_buffers
 
@@ -93,6 +94,12 @@ class GPT(nn.Module):
 
         # Final-logit softcapping
         self.final_logit_softcapping = config.final_logit_softcapping
+
+        # Optionally mix outputs of all blocks before final layer norm
+        self.use_ln_f_input_mixer = config.use_ln_f_input_mixer
+        if self.use_ln_f_input_mixer:
+            variant_cls = output_vector_variant_dict[config.ln_f_input_mixer_variant]
+            self.ln_f_mixer = variant_cls(config)
 
         # Use the new SharedParamGroupCreator for MLP and Attn layers
         spg_creator = SharedParamGroupCreator(config)
@@ -403,6 +410,9 @@ class GPT(nn.Module):
             if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
                 x = self.lsv_matrix(x)
 
+            if self.use_ln_f_input_mixer:
+                layer_outputs = [x]
+
             layer_idx = 1
             for block in self.transformer.h:
                 x = block(x, iter_num)
@@ -429,7 +439,13 @@ class GPT(nn.Module):
                         and layer_idx == self.config.obtain_vector_at_layer_idx):
                     x = self.obtain_vector_from_layer_output(x)
 
+                if self.use_ln_f_input_mixer:
+                    layer_outputs.append(x)
+
                 layer_idx += 1
+
+            if self.use_ln_f_input_mixer:
+                x = self.ln_f_mixer(layer_outputs)
 
             # 3. Final layer norm
             x = self.transformer.ln_f(x)
@@ -518,6 +534,9 @@ class GPT(nn.Module):
             if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
                 x = self.lsv_matrix(x)
 
+            if self.use_ln_f_input_mixer:
+                layer_outputs = [x]
+
             layer_idx = 1
             for block in self.transformer.h:
                 # Propagate tokens through layers
@@ -547,7 +566,13 @@ class GPT(nn.Module):
                     print(layer_idx, self.config.obtain_vector_at_layer_idx)
                     x = self.obtain_vector_from_layer_output(x)
 
+                if self.use_ln_f_input_mixer:
+                    layer_outputs.append(x)
+
                 layer_idx +=1
+
+            if self.use_ln_f_input_mixer:
+                x = self.ln_f_mixer(layer_outputs)
 
             x = self.transformer.ln_f(x)
 
@@ -626,12 +651,20 @@ class GPT(nn.Module):
         if self.use_lsv and self.config.apply_lsv_at_layer_idx == 0:
             x = self.lsv_matrix(x)
 
+        if self.use_ln_f_input_mixer:
+            layer_outputs = [x]
+
         layer_idx = 1
         for block in self.transformer.h:
             x = block(x, iter_num)
             if self.use_lsv and layer_idx == self.config.apply_lsv_at_layer_idx:
                 x = self.lsv_matrix(x)
+            if self.use_ln_f_input_mixer:
+                layer_outputs.append(x)
             layer_idx += 1
+
+        if self.use_ln_f_input_mixer:
+            x = self.ln_f_mixer(layer_outputs)
 
         x = self.transformer.ln_f(x)
         if self.n_embd_wte:
