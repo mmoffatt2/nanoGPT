@@ -51,7 +51,7 @@ class GaussianLearnedConfidence(BaseLearnedConfidence):
                 torch.nn.init.normal_(
                     torch.empty(dim),
                     mean=config.resid_gaussian_mean_init,
-                    std=config.resid_gaussian_mean_std,
+                    std=config.resid_gaussian_std_init,
                 )
             ),
         )

@@ -456,7 +456,7 @@ def parse_args():
 
     ### Guassian style settings
     model_group.add_argument('--resid_gaussian_mean_init', type=float, default=0.0, help='Gaussian residual init setting, mean value.')
-    model_group.add_argument('--resid_gaussian_mean_std', type=float, default=0.02, help='Gaussian residual init setting, standard deviation.')
+    model_group.add_argument('--resid_gaussian_std_init', type=float, default=0.02, help='Gaussian residual init setting, standard deviation.')
 
 
     # NORM VARIATIONS
