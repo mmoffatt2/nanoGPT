@@ -10,6 +10,10 @@ parameter_groups:
   # Normalize down projection vectors
   - mlp_cproj_scale: [1.0]
     mlp_cproj_row_norm: [true]
+  # L2 normalize activation vectors
+  - mlp_cproj_scale: [1.0]
+    mlp_cproj_row_norm: [false]
+    mlp_post_act_l2_norm: [true]
 
 mlp_variant: ["mlp"]
 activation_variant: ["relu"]

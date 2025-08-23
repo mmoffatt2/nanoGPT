@@ -429,6 +429,7 @@ def parse_args():
     model_group.add_argument("--mlp_size", type=int, default=None, help="If not None, is used instead of mlp_expansion_factor")
     model_group.add_argument('--mlp_cproj_scale', default=1.0, type=float, help="Divide MLP down projection outputs by this value")
     model_group.add_argument('--mlp_cproj_row_norm', default=False, action=argparse.BooleanOptionalAction, help="L2 normalize rows of MLP down projection weights at init")
+    model_group.add_argument('--mlp_post_act_l2_norm', default=False, action=argparse.BooleanOptionalAction, help="L2 normalize MLP activation vectors before down projection")
 
     ## KAN Options
     model_group.add_argument("--kan_poly_order", type=int, default=3, help="Order of KAN non-linearity")
