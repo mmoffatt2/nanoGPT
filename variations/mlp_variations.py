@@ -390,7 +390,7 @@ class Swiglu(nn.Module):
         x_out = x_in1 * x_in2
 
         if self.cproj_scale is not None and self.cproj_scale != 1.0:
-            x = x / self.cproj_scale
+            x_out = x_out / self.cproj_scale
 
         # Apply fused down projection and sum the outputs
         x = self.c_fc_out(x_out)
