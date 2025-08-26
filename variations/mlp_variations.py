@@ -250,7 +250,7 @@ class DualPathMLP(nn.Module):
             x2 = x2 / x2.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
         if self.cproj_scale is not None and self.cproj_scale != 1.0:
-            x2 = x2/ self.cproj_scale
+            x2 = x2 / self.cproj_scale
 
         x2 = self.c_proj2(x2)
 
