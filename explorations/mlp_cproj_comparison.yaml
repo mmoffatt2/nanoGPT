@@ -1,0 +1,43 @@
+# mlp_cproj_comparison.yaml
+---
+parameter_groups:
+  # Baseline: default down projection
+  - mlp_cproj_scale: [1.0]
+    tensorboard_run_name: ["default_settings"]
+  # L2 normalize activation vectors
+  - mlp_cproj_scale: [1.0]
+    mlp_post_act_l2_norm: [true]
+    tensorboard_run_name: ["only_post_activation_norm"]
+  # L2 normalize activation vectors and cproj_scale
+  - mlp_cproj_scale: [1536]
+    mlp_post_act_l2_norm: [true]
+    tensorboard_run_name: ["c-proj-scale_and_post-act-norm"]
+  # only cproj scale
+  - mlp_cproj_scale: [1536]
+    mlp_post_act_l2_norm: [false]
+    tensorboard_run_name: ["only_cproj_scale"]
+
+mlp_variant: ["mlp", "swiglu"]
+activation_variant: ["relu", "squared_relu", "gelu", "silu"]
+compile: [true]
+use_rotary_embeddings: [true]
+use_abs_pos_embeddings: [false]
+use_peri_ln: [true]
+
+warmup_iters: [500]
+max_iters: [5000]
+eval_interval: [500]
+
+n_layer: [5]
+n_embd: [320]
+n_head: [5]
+
+block_size: [256]
+batch_size: [32]
+
+compile: [true]
+compute_model_stats: [true]
+
+dataset: ["minipile"]
+
+dtype: ["float16"]

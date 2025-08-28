@@ -86,6 +86,9 @@ class OriginalMLP(nn.Module):
             bias=use_down_bias,
         )
 
+        self.cproj_scale = config.mlp_cproj_scale
+        self.post_act_l2_norm = config.mlp_post_act_l2_norm
+
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x, iter_num=None):
@@ -105,11 +108,16 @@ class OriginalMLP(nn.Module):
         # Apply offsets to the activation function
         x = self.activation_variant(x - self.activation_x_offset) - self.activation_y_offset
 
+        if self.post_act_l2_norm:
+            x = x / x.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
         if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
             x = fake_quantize_act(self, "mlp_act_activation_output", x, num_bits, quant_method, iter_num)
 
+        if self.cproj_scale is not None and self.cproj_scale != 1.0:
+            x = x / self.cproj_scale
 
         # Apply fused down projection and sum the outputs
         x = self.c_proj(x)
@@ -204,6 +212,9 @@ class DualPathMLP(nn.Module):
             bias=config.mlp_down_bias
         )
 
+        self.cproj_scale = config.mlp_cproj_scale
+        self.post_act_l2_norm = config.mlp_post_act_l2_norm
+
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x, iter_num=None):
@@ -222,10 +233,25 @@ class DualPathMLP(nn.Module):
 
         # First activation path - shifted right
         x1 = self.activation_variant(x - self.activation_x_offset) - self.activation_y_offset
+
+
+        if self.post_act_l2_norm:
+            x1 = x1 / x1.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+        if self.cproj_scale is not None and self.cproj_scale != 1.0:
+            x1 = x1 / self.cproj_scale
+
         x1 = self.c_proj1(x1)
 
         # Second activation path - shifted left and negated input
         x2 = -self.activation_variant(-(x + self.activation_x_offset)) - self.activation_y_offset
+
+        if self.post_act_l2_norm:
+            x2 = x2 / x2.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+        if self.cproj_scale is not None and self.cproj_scale != 1.0:
+            x2 = x2 / self.cproj_scale
+
         x2 = self.c_proj2(x2)
 
         # Combine paths
@@ -331,6 +357,9 @@ class Swiglu(nn.Module):
             bias=use_down_bias,
         )
 
+        self.cproj_scale = config.mlp_cproj_scale
+        self.post_act_l2_norm = config.mlp_post_act_l2_norm
+
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x, iter_num=None):
@@ -349,6 +378,9 @@ class Swiglu(nn.Module):
 
         x_in1 = self.activation_variant(x_in1 - self.activation_x_offset) - self.activation_y_offset
 
+        if self.post_act_l2_norm:
+            x_in1 = x_in1 / x_in1.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
         if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
@@ -357,8 +389,12 @@ class Swiglu(nn.Module):
         x_in2 = self.c_fc_in2(x)
         x_out = x_in1 * x_in2
 
+        if self.cproj_scale is not None and self.cproj_scale != 1.0:
+            x_out = x_out / self.cproj_scale
+
         # Apply fused down projection and sum the outputs
         x = self.c_fc_out(x_out)
+
         if self.mlp_down_projs > 1:
             batch_size, seq_len, _ = x.shape
             x = x.view(batch_size, seq_len, self.mlp_down_projs, -1)

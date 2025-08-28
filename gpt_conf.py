@@ -174,6 +174,8 @@ class GPTConfig:
     mlp_variant: str = "mlp"
     mlp_expansion_factor: int = 4
     mlp_size: int = None
+    mlp_cproj_scale: float = 1.0
+    mlp_post_act_l2_norm: bool = False
 
     ## KAN Option
     kan_poly_order: int = 3
