@@ -175,7 +175,6 @@ class GPTConfig:
     mlp_expansion_factor: int = 4
     mlp_size: int = None
     mlp_cproj_scale: float = 1.0
-    mlp_cproj_row_norm: bool = False
     mlp_post_act_l2_norm: bool = False
 
     ## KAN Option
