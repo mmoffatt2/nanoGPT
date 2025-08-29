@@ -812,6 +812,7 @@ def parse_args():
         "softplus",
         "squareplus",
         "softshrink",
+        "gelumax",
         "exppolymax",
         "pfla_softmax",
         ]
