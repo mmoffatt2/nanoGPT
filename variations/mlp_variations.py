@@ -277,7 +277,6 @@ class DualPathMLP(nn.Module):
         else:
             x1 = self.c_proj1(x1)
 
-            
         # Second activation path - shifted left and negated input
         x2 = -self.activation_variant(-(x + self.activation_x_offset)) - self.activation_y_offset
 
