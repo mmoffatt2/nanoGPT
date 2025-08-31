@@ -8,10 +8,36 @@ parameter_groups:
     mlp_confidence_variant: ["zeros"]
     use_attn_resid_const: [true]
     use_mlp_resid_const: [true]
-    learn_attn_resid_const: [false]
+    learn_attn_resid_const: [true]
+    learn_mlp_resid_const: [true]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
+    loss_fn: ["focal"]
+    focal_gamma: [0.5, 1.0, 2.0, 5.0, 10.0]
+
+  # Learned Confidence with Focal Loss
+  - use_attn_resid_scaling: [true]
+    use_mlp_resid_scaling: [true]
+    attn_confidence_variant: ["zeros"]
+    mlp_confidence_variant: ["zeros"]
+    use_attn_resid_const: [true]
+    use_mlp_resid_const: [true]
+    learn_attn_resid_const: [true]
     learn_mlp_resid_const: [false]
-    attn_resid_const: [1]
-    mlp_resid_const: [1]
+    attn_resid_const: [0, 1]
+    loss_fn: ["focal"]
+    focal_gamma: [0.5, 1.0, 2.0, 5.0, 10.0]
+
+  # Learned Confidence with Focal Loss
+  - use_attn_resid_scaling: [true]
+    use_mlp_resid_scaling: [true]
+    attn_confidence_variant: ["zeros"]
+    mlp_confidence_variant: ["zeros"]
+    use_attn_resid_const: [true]
+    use_mlp_resid_const: [true]
+    learn_attn_resid_const: [false]
+    learn_mlp_resid_const: [true]
+    mlp_resid_const: [0, 1]
     loss_fn: ["focal"]
     focal_gamma: [0.5, 1.0, 2.0, 5.0, 10.0]
 
@@ -22,10 +48,32 @@ parameter_groups:
     mlp_confidence_variant: ["zeros"]
     use_attn_resid_const: [true]
     use_mlp_resid_const: [true]
-    learn_attn_resid_const: [false]
-    learn_mlp_resid_const: [false]
-    attn_resid_const: [1]
-    mlp_resid_const: [1]
+    learn_attn_resid_const: [true]
+    learn_mlp_resid_const: [true]
+    attn_resid_const: [0, 1]
+    mlp_resid_const: [0, 1]
+    loss_fn: ["cross_entropy"]
+
+  # Learned Confidence with Cross Entropy
+  - use_attn_resid_scaling: [true]
+    use_mlp_resid_scaling: [true]
+    attn_confidence_variant: ["zeros"]
+    mlp_confidence_variant: ["zeros"]
+    use_attn_resid_const: [true]
+    use_mlp_resid_const: [true]
+    learn_attn_resid_const: [true]
+    attn_resid_const: [0, 1]
+    loss_fn: ["cross_entropy"]
+
+  # Learned Confidence with Cross Entropy
+  - use_attn_resid_scaling: [true]
+    use_mlp_resid_scaling: [true]
+    attn_confidence_variant: ["zeros"]
+    mlp_confidence_variant: ["zeros"]
+    use_attn_resid_const: [true]
+    use_mlp_resid_const: [true]
+    learn_mlp_resid_const: [true]
+    mlp_resid_const: [0, 1]
     loss_fn: ["cross_entropy"]
 
   # Focal Loss
@@ -38,8 +86,6 @@ parameter_groups:
   - use_attn_resid_scaling: [false]
     use_mlp_resid_scaling: [false]
     loss_fn: ["cross_entropy"]
-
-
 
 
 # base hyperparameters
