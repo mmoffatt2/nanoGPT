@@ -185,7 +185,7 @@ class TiktokenTokenizer(Tokenizer):
 
         # Save metadata
         meta = {
-            "vocab_size": len(self.enc._mergeable_ranks) + len(self.special_tokens),
+            "vocab_size": self.enc.n_vocab,
             "tokenizer": "tiktoken",
             "tiktoken_encoding": self.tiktoken_encoding,
             "has_additional_tokens": bool(self.additional_tokens),
