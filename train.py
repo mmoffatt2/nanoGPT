@@ -425,20 +425,28 @@ class Trainer:
 
 
     def create_optimizer(self):
-        param_groups = [
-            {"params": self.model.parameters(), "lr": self.args.learning_rate}
-        ]
-
         optimizer_key = self.args.optimizer
 
-        # obtain builder, and ensure optimizer is in list
+        if optimizer_key == "muon":
+            named = list(self.model.named_parameters())
+            exclude = ("embed", "wte", "wpe", "lm_head")
+            hidden = [p for n, p in named if p.ndim >= 2 and all(e not in n for e in exclude)]
+            other = [p for n, p in named if not (p.ndim >= 2 and all(e not in n for e in exclude))]
+            param_groups = [
+                {"params": other, "use_muon": False},
+                {"params": hidden, "use_muon": True},
+            ]
+        else:
+            param_groups = [
+                {"params": self.model.parameters(), "lr": self.args.learning_rate}
+            ]
+
         try:
             optimizer_builder = optimizer_dictionary[optimizer_key]
         except KeyError:
             raise ValueError(f"Unknown optimizer '{optimizer_key}'. "
                              f"Available: {list(optimizer_dictionary)}")
 
-        # return torch.optim.Optimizer instance
         optimizer = optimizer_builder(param_groups, self.args)
 
         return optimizer
