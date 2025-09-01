@@ -433,13 +433,6 @@ class Swiglu(nn.Module):
 
         x_in1 = self.activation_variant(x_in1 - self.activation_x_offset) - self.activation_y_offset
 
-        # Mitigate Cproj Down Spikes
-        if self.post_act_l2_norm:
-            x_in1 = x_in1 / x_in1.norm(dim=-1, keepdim=True).clamp_min(1e-6)
-
-        if self.cproj_scale is not None and self.cproj_scale != 1.0:
-            x_in1 = x_in1 / self.cproj_scale
-
         if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
@@ -454,6 +447,13 @@ class Swiglu(nn.Module):
             x_in2 = self.c_fc_in2(x)
 
         x_out = x_in1 * x_in2
+
+        # Mitigate Cproj Down Spikes
+        if self.post_act_l2_norm:
+            x_out = x_out / x_out.norm(dim=-1, keepdim=True).clamp_min(1e-6)
+
+        if self.cproj_scale is not None and self.cproj_scale != 1.0:
+            x_out = x_out / self.cproj_scale
 
         # optional down projection normalization to keep vectors on hypersphere
         if self.l2_norm_mlp_down:
