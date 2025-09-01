@@ -22,7 +22,7 @@ except ImportError as e:                           # graceful fallback
 # Muon optimiser -----------------------------------------------------------
 # Reference: Jordan et al., 2024 (https://kellerjordan.github.io/posts/muon/)
 try:
-    from train_variations.muon.muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
+    from train_variations.muon import MuonWithAuxAdam, SingleDeviceMuonWithAuxAdam
 except ImportError:  # optional dependency
     MuonWithAuxAdam = None
     SingleDeviceMuonWithAuxAdam = None
