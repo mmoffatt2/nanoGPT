@@ -165,6 +165,13 @@ def main():
     if args.display == "token":
         ids: List[int] = []
         scalars: List[float] = []
+    else:
+        table = Table(show_header=False, box=None, pad_edge=False)
+        table.add_column("rank", justify="right", no_wrap=True)
+        table.add_column("p_tgt", justify="right", no_wrap=True)
+        table.add_column("p_left", justify="right", no_wrap=True)
+        for _ in range(args.topk):
+            table.add_column(justify="center", no_wrap=True)
 
     while tokens_left > 0:
         # Build window
@@ -203,16 +210,8 @@ def main():
                     style += " underline"
                 words.append(Text(decode([idx]), style=style))
 
-            table = Table(show_header=False, box=None, pad_edge=False)
-            table.add_column("rank")
-            table.add_column("p_tgt")
-            table.add_column("p_left")
-            for _ in range(args.topk):
-                table.add_column(justify="center")
             row = [str(rank), f"{tgt_prob:.4f}", f"{prob_left:.4f}"] + words
             table.add_row(*row)
-            console.print(table)
-            lines.append(_ansi(table))
 
         # advance
         step = 1 if args.window == "rolling" else ctx_len
@@ -223,6 +222,9 @@ def main():
         coloured = _colour(ids, scalars, decode)
         console.print(coloured)
         lines.append(_ansi(coloured))
+    else:
+        console.print(table)
+        lines.append(_ansi(table))
 
     if args.output_file:
         Path(args.output_file).write_text("".join(lines), "utf-8", errors="replace")
