@@ -438,7 +438,7 @@ class Swiglu(nn.Module):
             x_in1 = x_in1 / x_in1.norm(dim=-1, keepdim=True).clamp_min(1e-6)
 
         if self.cproj_scale is not None and self.cproj_scale != 1.0:
-            x = x / self.cproj_scale
+            x_in1 = x_in1 / self.cproj_scale
 
         if self.quantization_mlp_dict["quantize_mlp_act_activation_output"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_output_bits"]
