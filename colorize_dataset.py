@@ -30,7 +30,7 @@ python colorize_dataset.py \
 """
 from __future__ import annotations
 
-import argparse, io, pickle
+import argparse, io, pickle, math
 from pathlib import Path
 from typing import Callable, List, Sequence
 
@@ -108,6 +108,9 @@ def parse_args():
     p.add_argument("--topk", type=int, default=10, help="Number of top predictions to display when using topk display")
     p.add_argument("--max_token_chars", type=int, default=20, help="Maximum characters for top-k token columns (-1 to disable clipping)")
     p.add_argument("--rank_red", type=int, default=100, help="Rank value treated as fully red in heatmap")
+    p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
+    p.add_argument("--plot_file", default="metrics.html", help="Output HTML file for Plotly metrics")
+    p.add_argument("--focal_gamma", type=float, default=2.0, help="Focal loss gamma for metrics plotting")
     return p.parse_args()
 
 
@@ -169,12 +172,21 @@ def main():
         scalars: List[float] = []
     else:
         table = Table(show_header=False, box=None, pad_edge=False)
-        table.add_column("logit", justify="right", no_wrap=True)
+        table.add_column("target", no_wrap=True)
+        table.add_column("xent", justify="right", no_wrap=True)
         table.add_column("rank", justify="right", no_wrap=True)
         table.add_column("p_tgt", justify="right", no_wrap=True)
         table.add_column("p_left", justify="right", no_wrap=True)
         for _ in range(args.topk):
             table.add_column(justify="center", no_wrap=True)
+
+    if args.plot_metrics:
+        metrics_rank: List[float] = []
+        metrics_p_left: List[float] = []
+        metrics_p_tgt: List[float] = []
+        metrics_p_top1: List[float] = []
+        metrics_ce: List[float] = []
+        metrics_focal: List[float] = []
 
     while tokens_left > 0:
         # Build window
@@ -189,21 +201,28 @@ def main():
         ctx_len = logits.size(0)
         tgt_token = int(seq[-1])  # ground-truth next token
 
+        probs = F.softmax(logits[-1], dim=-1)
+        tgt_prob = probs[tgt_token].item()
+        tgt_logit = logits[-1, tgt_token].item()
+        rank = int((logits[-1] > logits[-1, tgt_token]).sum().item()) + 1
+        prob_left = probs[logits[-1] > logits[-1, tgt_token]].sum().item()
+        p_top1 = probs.max().item()
+        ce = -math.log(tgt_prob + 1e-12)
+        focal = ((1 - tgt_prob) ** args.focal_gamma) * ce
+
+        if args.plot_metrics:
+            metrics_rank.append(rank)
+            metrics_p_left.append(prob_left)
+            metrics_p_tgt.append(tgt_prob)
+            metrics_p_top1.append(p_top1)
+            metrics_ce.append(ce)
+            metrics_focal.append(focal)
+
         if args.display == "token":
-            scalar_val = (
-                F.softmax(logits[-1], dim=-1)[tgt_token].item()
-                if args.mode == "softmax" else logits[-1, tgt_token].item()
-            )
+            scalar_val = tgt_prob if args.mode == "softmax" else tgt_logit
             ids.append(tgt_token)
             scalars.append(scalar_val)
         else:
-            # probabilities and rankings
-            probs = F.softmax(logits[-1], dim=-1)
-            tgt_prob = probs[tgt_token].item()
-            tgt_logit = logits[-1, tgt_token].item()
-            rank = int((logits[-1] > logits[-1, tgt_token]).sum().item()) + 1
-            prob_left = probs[logits[-1] > logits[-1, tgt_token]].sum().item()
-
             topv, topi = logits[-1].topk(args.topk)
             norm = (topv - topv.min()) / (topv.max() - topv.min() + 1e-6)
             words: List[Text] = []
@@ -217,22 +236,23 @@ def main():
                     token = token[: args.max_token_chars]
                 words.append(Text(token, style=style))
 
-            # rank colour (1 green, args.rank_red red)
             rank_norm = 1 - (min(rank, args.rank_red) - 1) / max(args.rank_red - 1, 1)
             r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
             rank_text = Text(str(rank), style=f"bold #{r:02x}{g:02x}00")
 
-            # target probability colour (1 green, 0 red)
             v = tgt_prob
             r = int((1 - v) * 255); g = int(v * 255)
             p_tgt_text = Text(f"{tgt_prob:.4f}", style=f"bold #{r:02x}{g:02x}00")
 
-            # probability left colour (0 green, 1 red)
             v = 1 - prob_left
             r = int((1 - v) * 255); g = int(v * 255)
             p_left_text = Text(f"{prob_left:.4f}", style=f"bold #{r:02x}{g:02x}00")
 
-            row = [f"{tgt_logit:.4f}", rank_text, p_tgt_text, p_left_text] + words
+            target_word = decode([tgt_token])
+            if args.max_token_chars >= 0:
+                target_word = target_word[: args.max_token_chars]
+
+            row = [Text(target_word), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + words
             table.add_row(*row)
 
         # advance
@@ -251,6 +271,24 @@ def main():
     if args.output_file:
         Path(args.output_file).write_text("".join(lines), "utf-8", errors="replace")
         console.print(f"[cyan]Saved → {args.output_file}[/cyan]")
+
+    if args.plot_metrics:
+        from plotly.subplots import make_subplots
+        import plotly.graph_objects as go
+
+        x = list(range(len(metrics_rank)))
+        fig = make_subplots(rows=6, cols=1, shared_xaxes=True,
+                            subplot_titles=["target rank", "prob left", "p(target)",
+                                            "p(top1)", "cross entropy", "focal loss"])
+        fig.add_trace(go.Scatter(x=x, y=metrics_rank, name="rank"), row=1, col=1)
+        fig.add_trace(go.Scatter(x=x, y=metrics_p_left, name="p_left"), row=2, col=1)
+        fig.add_trace(go.Scatter(x=x, y=metrics_p_tgt, name="p_tgt"), row=3, col=1)
+        fig.add_trace(go.Scatter(x=x, y=metrics_p_top1, name="p_top1"), row=4, col=1)
+        fig.add_trace(go.Scatter(x=x, y=metrics_ce, name="cross_entropy"), row=5, col=1)
+        fig.add_trace(go.Scatter(x=x, y=metrics_focal, name="focal"), row=6, col=1)
+        fig.update_layout(height=300 * 6, showlegend=False)
+        fig.write_html(args.plot_file)
+        console.print(f"[cyan]Saved plot → {args.plot_file}[/cyan]")
 
 
 if __name__ == "__main__":
