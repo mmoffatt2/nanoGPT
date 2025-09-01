@@ -106,6 +106,8 @@ def parse_args():
     p.add_argument("--output_file", default="dataset_color.txt")
     p.add_argument("--display", choices=["token", "topk"], default="token", help="Output format")
     p.add_argument("--topk", type=int, default=10, help="Number of top predictions to display when using topk display")
+    p.add_argument("--max_token_chars", type=int, default=20, help="Maximum characters for top-k token columns (-1 to disable clipping)")
+    p.add_argument("--rank_red", type=int, default=100, help="Rank value treated as fully red in heatmap")
     return p.parse_args()
 
 
@@ -167,6 +169,7 @@ def main():
         scalars: List[float] = []
     else:
         table = Table(show_header=False, box=None, pad_edge=False)
+        table.add_column("logit", justify="right", no_wrap=True)
         table.add_column("rank", justify="right", no_wrap=True)
         table.add_column("p_tgt", justify="right", no_wrap=True)
         table.add_column("p_left", justify="right", no_wrap=True)
@@ -197,6 +200,7 @@ def main():
             # probabilities and rankings
             probs = F.softmax(logits[-1], dim=-1)
             tgt_prob = probs[tgt_token].item()
+            tgt_logit = logits[-1, tgt_token].item()
             rank = int((logits[-1] > logits[-1, tgt_token]).sum().item()) + 1
             prob_left = probs[logits[-1] > logits[-1, tgt_token]].sum().item()
 
@@ -208,9 +212,27 @@ def main():
                 style = f"bold #{r:02x}{g:02x}00"
                 if idx == tgt_token:
                     style += " underline"
-                words.append(Text(decode([idx]), style=style))
+                token = decode([idx])
+                if args.max_token_chars >= 0:
+                    token = token[: args.max_token_chars]
+                words.append(Text(token, style=style))
 
-            row = [str(rank), f"{tgt_prob:.4f}", f"{prob_left:.4f}"] + words
+            # rank colour (1 green, args.rank_red red)
+            rank_norm = 1 - (min(rank, args.rank_red) - 1) / max(args.rank_red - 1, 1)
+            r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
+            rank_text = Text(str(rank), style=f"bold #{r:02x}{g:02x}00")
+
+            # target probability colour (1 green, 0 red)
+            v = tgt_prob
+            r = int((1 - v) * 255); g = int(v * 255)
+            p_tgt_text = Text(f"{tgt_prob:.4f}", style=f"bold #{r:02x}{g:02x}00")
+
+            # probability left colour (0 green, 1 red)
+            v = 1 - prob_left
+            r = int((1 - v) * 255); g = int(v * 255)
+            p_left_text = Text(f"{prob_left:.4f}", style=f"bold #{r:02x}{g:02x}00")
+
+            row = [f"{tgt_logit:.4f}", rank_text, p_tgt_text, p_left_text] + words
             table.add_row(*row)
 
         # advance
