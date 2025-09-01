@@ -53,13 +53,19 @@ def _ansi(renderable) -> str:
     return buf.getvalue()
 
 
-def _colour(ids: List[int], scalars: List[float], decode: Callable[[Sequence[int]], str]) -> Text:
+def _escape_ws(text: str) -> str:
+    return text.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+
+def _colour(ids: List[int], scalars: List[float], decode: Callable[[Sequence[int]], str], escape_ws: bool = True) -> Text:
     vals = torch.tensor(scalars, dtype=torch.float32)
     norm = (vals - vals.min()) / (vals.max() - vals.min() + 1e-6)
     out = Text()
     for tid, v in zip(ids, norm):
         r = int((1 - v.item()) * 255); g = int(v.item() * 255)
-        out.append(decode([tid]), style=f"bold #{r:02x}{g:02x}00")
+        token = decode([tid])
+        if escape_ws:
+            token = _escape_ws(token)
+        out.append(token, style=f"bold #{r:02x}{g:02x}00")
     return out
 
 # byte-fallback helpers -------------------------------------------------------
@@ -108,6 +114,8 @@ def parse_args():
     p.add_argument("--topk", type=int, default=10, help="Number of top predictions to display when using topk display")
     p.add_argument("--max_token_chars", type=int, default=20, help="Maximum characters for top-k token columns (-1 to disable clipping)")
     p.add_argument("--rank_red", type=int, default=100, help="Rank value treated as fully red in heatmap")
+    p.add_argument("--escape_whitespace", action=argparse.BooleanOptionalAction, default=True,
+                   help="Show newline and tab characters as escape sequences")
     p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
     p.add_argument("--plot_file", default="metrics.html", help="Output HTML file for Plotly metrics")
     p.add_argument("--focal_gamma", type=float, default=2.0, help="Focal loss gamma for metrics plotting")
@@ -234,6 +242,8 @@ def main():
                 token = decode([idx])
                 if args.max_token_chars >= 0:
                     token = token[: args.max_token_chars]
+                if args.escape_whitespace:
+                    token = _escape_ws(token)
                 words.append(Text(token, style=style))
 
             rank_norm = 1 - (min(rank, args.rank_red) - 1) / max(args.rank_red - 1, 1)
@@ -251,6 +261,8 @@ def main():
             target_word = decode([tgt_token])
             if args.max_token_chars >= 0:
                 target_word = target_word[: args.max_token_chars]
+            if args.escape_whitespace:
+                target_word = _escape_ws(target_word)
 
             row = [Text(target_word), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + words
             table.add_row(*row)
@@ -261,7 +273,7 @@ def main():
         tokens_left -= 1 if args.window == "rolling" else min(ctx_len, tokens_left)
 
     if args.display == "token":
-        coloured = _colour(ids, scalars, decode)
+        coloured = _colour(ids, scalars, decode, escape_ws=args.escape_whitespace)
         console.print(coloured)
         lines.append(_ansi(coloured))
     else:
