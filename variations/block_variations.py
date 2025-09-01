@@ -172,9 +172,7 @@ def edgellm_asic_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     chip_output = mlp_out + x_quantized_residual
 
     # Off-Chip: Merge Quantized Residual With Full Precision Residual
-    # Note:
-    # chip_output = x_quantized_residual_initial + mlp_out + attn_out
-    # Therefore subtract initial before mergin
+    # Therefore subtract initial before merging
     x = (chip_output - x_quantized_residual_initial) + x
 
     # Off-Chip: MLP Post-LN
