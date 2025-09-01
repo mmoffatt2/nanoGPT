@@ -131,7 +131,7 @@ def edgellm_asic_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     # Attn Pre-LN
     x_attn_in = x_quantized_residual
     if block.use_pre_ln_attn:
-        x_attn_in = block.pre_ln_attn_attn(x_attn_in)
+        x_attn_in = block.pre_ln_attn(x_attn_in)
 
     # Attn Operation
     attn_out = block.attn(x_attn_in, iter_num)
@@ -157,7 +157,7 @@ def edgellm_asic_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
 
     # MLP Pre-LN
     if block.use_pre_ln_mlp:
-        x_mlp_in = block.pre_ln_mlp_attn(x_mlp_in)
+        x_mlp_in = block.pre_ln_mlp(x_mlp_in)
 
     # MLP Operation
     mlp_out = block.mlp(x_mlp_in, iter_num)
