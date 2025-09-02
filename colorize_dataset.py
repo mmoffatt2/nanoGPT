@@ -116,6 +116,8 @@ def parse_args():
     p.add_argument("--rank_red", type=int, default=100, help="Rank value treated as fully red in heatmap")
     p.add_argument("--target_style", default="cyan",
                    help="Color to highlight the target token or 'underline' to underline it")
+    p.add_argument("--bold_target", action=argparse.BooleanOptionalAction, default=True,
+                   help="Bold the target token when highlighting")
     p.add_argument("--escape_whitespace", action=argparse.BooleanOptionalAction, default=True,
                    help="Show newline and tab characters as escape sequences")
     p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
@@ -238,12 +240,16 @@ def main():
             words: List[Text] = []
             for idx, v in zip(topi.tolist(), norm.tolist()):
                 r = int((1 - v) * 255); g = int(v * 255)
-                style = f"bold #{r:02x}{g:02x}00"
+                style = f"#{r:02x}{g:02x}00"
                 if idx == tgt_token:
                     if args.target_style == "underline":
+                        if args.bold_target:
+                            style += " bold"
                         style += " underline"
                     else:
-                        style = f"bold {args.target_style}"
+                        style = args.target_style
+                        if args.bold_target:
+                            style = f"bold {style}"
                 token = decode([idx])
                 if args.max_token_chars >= 0:
                     token = token[: args.max_token_chars]
@@ -268,7 +274,12 @@ def main():
                 target_word = target_word[: args.max_token_chars]
             if args.escape_whitespace:
                 target_word = _escape_ws(target_word)
-            target_style = f"bold {args.target_style}" if args.target_style != "underline" else "bold underline"
+            if args.target_style == "underline":
+                target_style = "underline"
+            else:
+                target_style = args.target_style
+            if args.bold_target:
+                target_style = f"bold {target_style}" if target_style else "bold"
 
             row = [Text(target_word, style=target_style), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + words
             table.add_row(*row)
