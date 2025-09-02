@@ -256,6 +256,27 @@ class CustomTokenizer(Tokenizer):
     def detokenize(self, ids):
         return ''.join([self.itos[id] for id in ids])
 
+class ByteTokenizer(Tokenizer):
+    def __init__(self, args):
+        super().__init__(args)
+
+    def tokenize(self, data):
+        data_bytes = data.encode('utf-8')
+        ids = list(data_bytes)
+        for token_id in ids:
+            self.record_token(token_id)
+        meta = {
+            "vocab_size": 256,
+            "tokenizer": "byte",
+            "itos": {i: bytes([i]) for i in range(256)},
+        }
+        self.finalize_meta(meta)
+        return ids
+
+    def detokenize(self, ids):
+        return bytes(ids).decode('utf-8', errors='replace')
+
+
 class CharTokenizer(Tokenizer):
     def __init__(self, args, train_data, val_data):
         super().__init__(args)

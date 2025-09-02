@@ -48,8 +48,6 @@ from utils.model_stats import (
 
 from sample import (
     sample_with_existing_model,
-    custom_char_with_byte_fallback_encode as ccwb_encode,
-    custom_char_with_byte_fallback_decode as ccwb_decode,
     get_tokenizer_functions,
 )
 
@@ -487,8 +485,9 @@ class Trainer:
                 else:
                     print("Using default character-level tokenizer")
 
-                if 'stoi' in meta and 'itos' in meta:
+                if 'stoi' in meta:
                     self.stoi = meta['stoi']
+                if 'itos' in meta:
                     self.itos = meta['itos']
             else:
                 sys.exit("Error: meta.pkl not found")
