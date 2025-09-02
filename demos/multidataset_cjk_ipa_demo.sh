@@ -30,7 +30,7 @@ python3 train.py \
     --dataset_sampling_probs 1 1 1 \
     --use_lsv \
     --max_iters 10000 \
-    --batch_size 16
+    --batch_size 16 \
     --apply_lsv_at_layer_idx 0 \
     --eval_interval 500 \
     --eval_iters 50 \
