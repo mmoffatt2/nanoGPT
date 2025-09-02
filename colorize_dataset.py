@@ -114,6 +114,8 @@ def parse_args():
     p.add_argument("--topk", type=int, default=10, help="Number of top predictions to display when using topk display")
     p.add_argument("--max_token_chars", type=int, default=20, help="Maximum characters for top-k token columns (-1 to disable clipping)")
     p.add_argument("--rank_red", type=int, default=100, help="Rank value treated as fully red in heatmap")
+    p.add_argument("--target_style", choices=["orange", "underline"], default="orange",
+                   help="How to highlight the target token in top-k display")
     p.add_argument("--escape_whitespace", action=argparse.BooleanOptionalAction, default=True,
                    help="Show newline and tab characters as escape sequences")
     p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
@@ -238,7 +240,10 @@ def main():
                 r = int((1 - v) * 255); g = int(v * 255)
                 style = f"bold #{r:02x}{g:02x}00"
                 if idx == tgt_token:
-                    style += " underline"
+                    if args.target_style == "underline":
+                        style += " underline"
+                    else:
+                        style = "bold #ff8800"
                 token = decode([idx])
                 if args.max_token_chars >= 0:
                     token = token[: args.max_token_chars]
@@ -263,8 +268,9 @@ def main():
                 target_word = target_word[: args.max_token_chars]
             if args.escape_whitespace:
                 target_word = _escape_ws(target_word)
+            target_style = "bold #ff8800" if args.target_style == "orange" else "bold underline"
 
-            row = [Text(target_word), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + words
+            row = [Text(target_word, style=target_style), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + words
             table.add_row(*row)
 
         # advance
