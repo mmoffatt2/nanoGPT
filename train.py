@@ -715,10 +715,10 @@ class Trainer:
 
         def get_transitioned_probs():
             initial_probs = np.array(self.args.dataset_sampling_probs)
-            if self.args.final_dataset_sampling_probs:
+            if self.args.dataset_sampling_probs_final:
                 step_ratio = self.iter_num / self.args.max_iters
                 final_probs = np.array(self.args.dataset_sampling_probs_final)
-                return interpolate_probs(initial_probs, final_probs, self.args.transition_method, step_ratio)
+                return interpolate_probs(initial_probs, final_probs, self.args.dataset_sampling_probs_transition_method, step_ratio)
             return initial_probs
 
         if self.args.training_mode == 'multicontext':
