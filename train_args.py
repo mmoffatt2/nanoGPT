@@ -246,6 +246,7 @@ def parse_args():
             "var_adaptive_lr",
             "lookahead",
             "entropy_aware_adamw",
+            "muon",
             ]
 
     training_group.add_argument("--optimizer", type=str, default="adamw",
@@ -255,6 +256,9 @@ def parse_args():
     # --------  SGD --------------------------------------------------
     training_group.add_argument("--sgd_momentum", type=float, default=0.9, help="Momentum for SGD optimizer.")
     training_group.add_argument("--sgd_nesterov", type=bool, default=False, action=argparse.BooleanOptionalAction)
+    # --------  MUON --------------------------------------------------
+    training_group.add_argument("--muon_momentum", type=float, default=0.95,
+                                help="Momentum for the Muon optimizer.")
     # --------  ADAMW --------------------------------------------------
     training_group.add_argument("--adamw_betas", type=float, nargs=2, default=[0.9, 0.999], help="Betas for AdamW optimizer.")
     training_group.add_argument("--adamw_eps", type=float, default=1e-8, help="Epsilon for AdamW optimizer.")
