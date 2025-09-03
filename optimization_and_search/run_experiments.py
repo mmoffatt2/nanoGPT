@@ -97,7 +97,7 @@ def expand_range(val):
         step = r.get('step', 1 if isinstance(start, int) else 0.1)
         if isinstance(start, int):
             return list(range(start, end + 1, step))
-        count = int((end - start) / step) + 1
+        count = int(round((end - start) / step)) + 1
         return [start + i * step for i in range(count)]
     return val
 
@@ -118,7 +118,6 @@ def generate_combinations(config: dict):
 
     Supports arbitrarily nested ``parameter_groups``.
     """
-
     def _expand_base_and_conditionals(cfg: dict):
         # Split plain parameters (base) from conditional specs
         base = {
@@ -315,4 +314,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
