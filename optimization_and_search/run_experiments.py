@@ -1,4 +1,3 @@
-# explore.py
 import json
 import subprocess
 from pathlib import Path
@@ -77,7 +76,9 @@ def load_configurations(path: str, fmt: str) -> list[dict]:
     """
     text = Path(path).read_text()
     if fmt == 'yaml':
+        # YAML may contain multiple documents or a single list
         loaded = list(yaml.safe_load_all(text))
+        # Flatten if outer list-of-lists
         if len(loaded) == 1 and isinstance(loaded[0], list):
             return loaded[0]
         return loaded
@@ -95,7 +96,7 @@ def expand_range(val):
         step = r.get('step', 1 if isinstance(start, int) else 0.1)
         if isinstance(start, int):
             return list(range(start, end + 1, step))
-        count = int((end - start) / step) + 1
+        count = int(round((end - start) / step)) + 1
         return [start + i * step for i in range(count)]
     return val
 
@@ -117,7 +118,13 @@ def generate_combinations(config: dict) -> dict:
     conditionals = {k: v for k, v in config.items() if isinstance(v, dict) and 'conditions' in v}
 
     for grp in groups:
-        merged = {**base, **grp}
+        # Process range expansion for parameters within the group
+        processed_grp = {
+            k: (expand_range(v) if isinstance(v, dict) and 'range' in v else v)
+            for k, v in grp.items()
+        }
+        processed_grp = {k: (v if isinstance(v, list) else [v]) for k, v in processed_grp.items()}
+        merged = {**base, **processed_grp}
         keys = list(merged)
         for combo in product(*(merged[k] for k in keys)):
             combo_dict = dict(zip(keys, combo))
@@ -125,7 +132,15 @@ def generate_combinations(config: dict) -> dict:
             for param, spec in conditionals.items():
                 next_valid = []
                 for c in valid:
-                    if all(c.get(key) == val for key, val in spec['conditions'].items()):
+                    # FIX: Handle conditions specified as a dict OR a list of dicts
+                    raw_conditions = spec.get('conditions', {})
+                    condition_pairs = []
+                    if isinstance(raw_conditions, dict):
+                        condition_pairs = raw_conditions.items()
+                    elif isinstance(raw_conditions, list):
+                        condition_pairs = (item for d in raw_conditions if isinstance(d, dict) for item in d.items())
+
+                    if all(c.get(key) == val for key, val in condition_pairs):
                         opts = spec['options']
                         for opt in (opts if isinstance(opts, list) else [opts]):
                             new = dict(c)
@@ -142,11 +157,7 @@ def format_run_name(combo: dict, base: str, prefix: str) -> str:
     """
     Create a unique run name from parameter values.
     """
-    def format_val(v):
-        if isinstance(v, list):
-            return '_'.join(map(str, v))
-        return str(v)
-    parts = [format_val(v) for v in combo.values()]
+    parts = [str(v) for v in combo.values()]
     return f"{prefix}{base}-{'-'.join(parts)}"
 
 
@@ -186,7 +197,7 @@ def append_log(log_file: Path, name: str, combo: dict, metrics: dict) -> None:
     """
     entry = {'formatted_name': name, 'config': combo, **metrics}
     with log_file.open('a') as f:
-        yaml.safe_dump(entry, f, explicit_start=True, default_flow_style=False)
+        yaml.safe_dump(entry, f, explicit_start=True)
 
 
 def build_command(combo: dict) -> list[str]:
@@ -196,21 +207,12 @@ def build_command(combo: dict) -> list[str]:
     cmd = ['python3', 'train.py']
     for k, v in combo.items():
         if isinstance(v, bool):
-            # Correctly handles action=argparse.BooleanOptionalAction
-            # e.g., --compile or --no-compile
             cmd.append(f"--{'' if v else 'no-'}{k}")
-        # ==================== FIX START ====================
-        # This block is modified to correctly handle lists for nargs='+' arguments.
         elif isinstance(v, list):
-            # Appends the flag once, e.g., --dataset_list
-            cmd.append(f"--{k}")
-            # Appends all items from the list as separate arguments
-            # e.g., shakespeare_char openwebtext
-            cmd.extend(str(x) for x in v)
-        # ===================== FIX END =====================
+            for x in v:
+                cmd += [f"--{k}", str(x)]
         else:
-            # Handles regular key-value pairs
-            cmd.extend([f"--{k}", str(v)])
+            cmd += [f"--{k}", str(v)]
     return cmd
 
 
@@ -250,13 +252,11 @@ def run_experiment(
         subprocess.run(cmd, check=True)
     except subprocess.CalledProcessError:
         print(f"[red]Process exited with error for run:[/] {run_name}")
-        # Continue to the next experiment
 
     # Read metrics (use existing or nan on failure)
     try:
         metrics = read_metrics(str(combo['out_dir']))
-    except Exception as e:
-        print(f"[red]Could not read metrics for {run_name}: {e}[/]")
+    except Exception:
         metrics = {k: float("nan") for k in METRIC_KEYS}
 
     append_log(log_file, run_name, combo, metrics)
