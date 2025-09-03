@@ -194,8 +194,14 @@ def format_run_name(combo: dict, base: str, prefix: str) -> str:
     """
     Create a unique run name from parameter values.
     """
-    parts = [str(v) for v in combo.values()
-             if not (isinstance(v, str) and RUN_NAME_VAR in v)]
+    parts = []
+    for v in combo.values():
+        if isinstance(v, str) and RUN_NAME_VAR in v:
+            sanitized = Path(v.replace(RUN_NAME_VAR, "")).name
+            if sanitized:
+                parts.append(sanitized)
+        else:
+            parts.append(str(v))
     return f"{prefix}{base}-{'-'.join(parts)}"
 
 
