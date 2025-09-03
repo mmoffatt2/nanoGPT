@@ -119,42 +119,74 @@ def generate_combinations(config: dict):
     Supports arbitrarily nested ``parameter_groups``.
     """
 
-    def recurse(cfg: dict):
-        groups = cfg.get('parameter_groups')
-        if groups:
-            base_cfg = {k: v for k, v in cfg.items() if k != 'parameter_groups'}
-            for grp in groups:
-                merged = {**base_cfg, **grp}
-                yield from recurse(merged)
-            return
-
+    def _expand_base_and_conditionals(cfg: dict):
+        # Split plain parameters (base) from conditional specs
         base = {
             k: (expand_range(v) if isinstance(v, dict) and 'range' in v else v)
             for k, v in cfg.items()
             if not (isinstance(v, dict) and 'conditions' in v)
+               and k != 'parameter_groups'
         }
+        # Ensure each base value is iterable for cartesian product
         base = {k: (v if isinstance(v, list) else [v]) for k, v in base.items()}
-        conditionals = {k: v for k, v in cfg.items() if isinstance(v, dict) and 'conditions' in v}
 
+        conditionals = {
+            k: v for k, v in cfg.items()
+            if isinstance(v, dict) and 'conditions' in v
+        }
+        return base, conditionals
+
+    def _conditions_match(combo: dict, raw_conditions):
+        # dict => AND of all pairs; list[dict] => OR across dicts, AND within each dict
+        if isinstance(raw_conditions, dict):
+            return all(combo.get(k) == v for k, v in raw_conditions.items())
+        if isinstance(raw_conditions, list):
+            clauses = [d for d in raw_conditions if isinstance(d, dict)]
+            if not clauses:
+                return False
+            return any(all(combo.get(k) == v for k, v in d.items()) for d in clauses)
+        return False
+
+    def _apply_conditionals(combo_dict: dict, conditionals: dict):
+        valid = [combo_dict]
+        for param, spec in conditionals.items():
+            next_valid = []
+            raw_conditions = spec.get('conditions', {})
+            opts = spec.get('options', [])
+            options = opts if isinstance(opts, list) else [opts]
+
+            for c in valid:
+                if _conditions_match(c, raw_conditions):
+                    for opt in options:
+                        new_c = dict(c)
+                        new_c[param] = opt
+                        next_valid.append(new_c)
+                else:
+                    # If conditions don't match, leave combo unchanged
+                    next_valid.append(c)
+            valid = next_valid
+        return valid
+
+    def recurse(cfg: dict):
+        groups = cfg.get('parameter_groups')
+        if groups:
+            # Coerce to list to handle both single dict and list-of-dicts
+            groups_list = groups if isinstance(groups, list) else [groups]
+            base_cfg = {k: v for k, v in cfg.items() if k != 'parameter_groups'}
+            for grp in groups_list:
+                merged = {**base_cfg, **grp}
+                yield from recurse(merged)
+            return
+
+        base, conditionals = _expand_base_and_conditionals(cfg)
         keys = list(base)
+        # itertools.product with zero iterables yields one empty tuple, which is what we want
         for combo in product(*(base[k] for k in keys)):
             combo_dict = dict(zip(keys, combo))
-            valid = [combo_dict]
-            for param, spec in conditionals.items():
-                next_valid = []
-                for c in valid:
-                    if all(c.get(key) == val for key, val in spec['conditions']):
-                        opts = spec['options']
-                        for opt in (opts if isinstance(opts, list) else [opts]):
-                            new = dict(c)
-                            new[param] = opt
-                            next_valid.append(new)
-                    else:
-                        next_valid.append(c)
-                valid = next_valid
-            for v in valid:
-                yield v
+            for final in _apply_conditionals(combo_dict, conditionals):
+                yield final
 
+    # Work on a shallow copy to avoid mutating caller's dict
     yield from recurse(dict(config))
 
 
