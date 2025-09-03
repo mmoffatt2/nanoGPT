@@ -37,7 +37,6 @@ use_abs_pos_embeddings: [false]
 use_qk_norm: [true]
 use_qk_norm_scale: [true]
 use_peri_ln: [true, false]
-compute_model_stats: [true]
 
 # logging
 compute_model_stats: [true]
