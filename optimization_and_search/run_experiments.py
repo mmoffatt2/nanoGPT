@@ -96,7 +96,7 @@ def expand_range(val):
         step = r.get('step', 1 if isinstance(start, int) else 0.1)
         if isinstance(start, int):
             return list(range(start, end + 1, step))
-        count = int((end - start) / step) + 1
+        count = int(round((end - start) / step)) + 1
         return [start + i * step for i in range(count)]
     return val
 
@@ -118,7 +118,13 @@ def generate_combinations(config: dict) -> dict:
     conditionals = {k: v for k, v in config.items() if isinstance(v, dict) and 'conditions' in v}
 
     for grp in groups:
-        merged = {**base, **grp}
+        # Process range expansion for parameters within the group
+        processed_grp = {
+            k: (expand_range(v) if isinstance(v, dict) and 'range' in v else v)
+            for k, v in grp.items()
+        }
+        processed_grp = {k: (v if isinstance(v, list) else [v]) for k, v in processed_grp.items()}
+        merged = {**base, **processed_grp}
         keys = list(merged)
         for combo in product(*(merged[k] for k in keys)):
             combo_dict = dict(zip(keys, combo))
@@ -126,7 +132,15 @@ def generate_combinations(config: dict) -> dict:
             for param, spec in conditionals.items():
                 next_valid = []
                 for c in valid:
-                    if all(c.get(key) == val for key, val in spec['conditions']):
+                    # FIX: Handle conditions specified as a dict OR a list of dicts
+                    raw_conditions = spec.get('conditions', {})
+                    condition_pairs = []
+                    if isinstance(raw_conditions, dict):
+                        condition_pairs = raw_conditions.items()
+                    elif isinstance(raw_conditions, list):
+                        condition_pairs = (item for d in raw_conditions if isinstance(d, dict) for item in d.items())
+
+                    if all(c.get(key) == val for key, val in condition_pairs):
                         opts = spec['options']
                         for opt in (opts if isinstance(opts, list) else [opts]):
                             new = dict(c)
@@ -260,4 +274,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
