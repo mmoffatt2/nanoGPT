@@ -111,7 +111,13 @@ def generate_combinations(config: dict) -> dict:
     conditionals = {k: v for k, v in config.items() if isinstance(v, dict) and 'conditions' in v}
 
     for grp in groups:
-        merged = {**base, **grp}
+        processed_grp = {
+                    k: (expand_range(v) if isinstance(v, dict) and 'range' in v else v)
+                    for k, v in grp.items()
+                }
+        processed_grp = {k: (v if isinstance(v, list) else [v]) for k, v in processed_grp.items()}
+        merged = {**base, **processed_grp}
+
         keys = list(merged)
         for combo in product(*(merged[k] for k in keys)):
             combo_dict = dict(zip(keys, combo))
@@ -119,7 +125,8 @@ def generate_combinations(config: dict) -> dict:
             for param, spec in conditionals.items():
                 next_valid = []
                 for c in valid:
-                    if all(c.get(key) == val for key, val in spec['conditions']):
+                    if all(c.get(key) == val for key, val in spec['conditions'].items()):
+
                         opts = spec['options']
                         for opt in (opts if isinstance(opts, list) else [opts]):
                             new = dict(c)
