@@ -12,21 +12,23 @@ parameter_groups:
       conditions:
         - ["l2_norm_mlp_down", true]
       options: ["embed", "hidden"]
-
+    parameter_groups:
+      - mlp_variant: ["mlp"]
+        activation_variant: ["gelu", "squared_relu"]
+      - mlp_variant: ["swiglu"]
+        activation_variant: ["silu", "squared_relu"]
 
 # base hyperparameters
-max_iters: [250]
-n_layer: [6]
-n_head: [6]
-n_embd: [384]
-block_size: [256]
+max_iters: [10000]
+n_layer: [12]
+n_head: [12]
+n_embd: [768]
+block_size: [1024]
 device: ["cuda"]
-dtype: ["bfloat16"]
-dataset: ["shakespeare_char"]
+dtype: ["float16"]
+dataset: ["minipile"]
 
 # training options
-compile: [true]
-never_save_checkpoint: [true]
 use_rotary_embeddings: [true]
 use_abs_pos_embeddings: [false]
 use_qk_norm: [true]
@@ -34,4 +36,12 @@ use_qk_norm_scale: [true]
 use_peri_ln: [true, false]
 compute_model_stats: [true]
 
-print_model_stats_table: ["${RUN_NAME}.csv"]
+# logging
+compute_model_stats: [true]
+tensorboard_log: [false]
+print_model_stats_table: ["./print_stats/${RUN_NAME}.csv"]
+
+# VRAM and Memory Saving
+never_save_checkpoint: [true]
+compile: [true]
+
