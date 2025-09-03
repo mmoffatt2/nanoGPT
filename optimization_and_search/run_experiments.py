@@ -86,10 +86,11 @@ def load_configurations(path: str, fmt: str) -> list[dict]:
         return json.loads(text)
 
 
+RUN_NAME_VAR = "${RUN_NAME}"
+
+
 def expand_range(val):
-    """
-    Expand dicts with 'range' into a list of values.
-    """
+    """Expand dicts with 'range' into a list of values."""
     if isinstance(val, dict) and 'range' in val:
         r = val['range']
         start, end = r['start'], r['end']
@@ -101,26 +102,42 @@ def expand_range(val):
     return val
 
 
-def generate_combinations(config: dict) -> dict:
-    """
-    Yield all valid parameter combinations for a single config dict.
+def _substitute_run_name(obj, run_name: str):
+    """Recursively substitute the run name placeholder inside ``obj``."""
+    if isinstance(obj, str):
+        return obj.replace(RUN_NAME_VAR, run_name)
+    if isinstance(obj, list):
+        return [_substitute_run_name(o, run_name) for o in obj]
+    if isinstance(obj, dict):
+        return {k: _substitute_run_name(v, run_name) for k, v in obj.items()}
+    return obj
 
-    Returns:
-        Iterator of parameter-combination dicts.
-    """
-    groups = config.pop('parameter_groups', [{}])
-    base = {
-        k: (expand_range(v) if isinstance(v, dict) and 'range' in v else v)
-        for k, v in config.items()
-        if not (isinstance(v, dict) and 'conditions' in v)
-    }
-    base = {k: (v if isinstance(v, list) else [v]) for k, v in base.items()}
-    conditionals = {k: v for k, v in config.items() if isinstance(v, dict) and 'conditions' in v}
 
-    for grp in groups:
-        merged = {**base, **grp}
-        keys = list(merged)
-        for combo in product(*(merged[k] for k in keys)):
+def generate_combinations(config: dict):
+    """Yield all valid parameter combinations for a config dict.
+
+    Supports arbitrarily nested ``parameter_groups``.
+    """
+
+    def recurse(cfg: dict):
+        groups = cfg.get('parameter_groups')
+        if groups:
+            base_cfg = {k: v for k, v in cfg.items() if k != 'parameter_groups'}
+            for grp in groups:
+                merged = {**base_cfg, **grp}
+                yield from recurse(merged)
+            return
+
+        base = {
+            k: (expand_range(v) if isinstance(v, dict) and 'range' in v else v)
+            for k, v in cfg.items()
+            if not (isinstance(v, dict) and 'conditions' in v)
+        }
+        base = {k: (v if isinstance(v, list) else [v]) for k, v in base.items()}
+        conditionals = {k: v for k, v in cfg.items() if isinstance(v, dict) and 'conditions' in v}
+
+        keys = list(base)
+        for combo in product(*(base[k] for k in keys)):
             combo_dict = dict(zip(keys, combo))
             valid = [combo_dict]
             for param, spec in conditionals.items():
@@ -138,12 +155,15 @@ def generate_combinations(config: dict) -> dict:
             for v in valid:
                 yield v
 
+    yield from recurse(dict(config))
+
 
 def format_run_name(combo: dict, base: str, prefix: str) -> str:
     """
     Create a unique run name from parameter values.
     """
-    parts = [str(v) for v in combo.values()]
+    parts = [str(v) for v in combo.values()
+             if not (isinstance(v, str) and RUN_NAME_VAR in v)]
     return f"{prefix}{base}-{'-'.join(parts)}"
 
 
@@ -223,6 +243,9 @@ def run_experiment(
 
     # Prepare tensorboard run name
     combo['tensorboard_run_name'] = run_name
+
+    # Substitute special run-name token in string parameters
+    combo = _substitute_run_name(combo, run_name)
 
     # Show parameters
     console = Console()
