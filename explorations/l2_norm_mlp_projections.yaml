@@ -20,9 +20,12 @@ parameter_groups:
 
 # base hyperparameters
 max_iters: [10000]
+eval_interval: [10000]
+eta_variant: ["iteration"]
 n_layer: [12]
 n_head: [12]
 n_embd: [768]
+batch_size: [16]
 block_size: [1024]
 device: ["cuda"]
 dtype: ["float16"]
