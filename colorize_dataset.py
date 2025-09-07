@@ -123,6 +123,9 @@ def parse_args():
     p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
     p.add_argument("--plot_file", default="metrics.html", help="Output HTML file for Plotly metrics")
     p.add_argument("--focal_gamma", type=float, default=2.0, help="Focal loss gamma for metrics plotting")
+    p.add_argument("--activation_view", choices=["target", "rank", "none"], default="target",
+                   help="Per-layer activation columns: 'target' shows dot-product with target token, "
+                        "'rank' shows rank of token best aligned with activation, 'none' hides these columns")
     return p.parse_args()
 
 
@@ -183,18 +186,19 @@ def main():
         ids: List[int] = []
         scalars: List[float] = []
     else:
-        table = Table(show_header=False, box=None, pad_edge=False)
+        table = Table(show_header=True, box=None, pad_edge=False)
         table.add_column("target", no_wrap=True)
         table.add_column("xent", justify="right", no_wrap=True)
         table.add_column("rank", justify="right", no_wrap=True)
         table.add_column("p_tgt", justify="right", no_wrap=True)
         table.add_column("p_left", justify="right", no_wrap=True)
-        table.add_column("t0", justify="right", no_wrap=True)
-        for i in range(model.config.n_layer):
-            table.add_column(f"a{i+1}", justify="right", no_wrap=True)
-            table.add_column(f"m{i+1}", justify="right", no_wrap=True)
-        for _ in range(args.topk):
-            table.add_column(justify="center", no_wrap=True)
+        if args.activation_view != "none":
+            table.add_column("t0", justify="right", no_wrap=True)
+            for i in range(model.config.n_layer):
+                table.add_column(f"a{i+1}", justify="right", no_wrap=True)
+                table.add_column(f"m{i+1}", justify="right", no_wrap=True)
+        for i in range(args.topk):
+            table.add_column(f"top{i+1}", justify="center", no_wrap=True)
 
     if args.plot_metrics:
         metrics_rank: List[float] = []
@@ -214,7 +218,7 @@ def main():
 
         activations = {"t0": None, "attn": [], "mlp": []}
         handles = []
-        if args.display != "token":
+        if args.display != "token" and args.activation_view != "none":
             def t0_hook(module, inp, out):
                 activations["t0"] = out[0, -1, :].detach()
 
@@ -254,21 +258,34 @@ def main():
         ctx_len = logits.size(0)
         tgt_token = int(seq[-1])  # ground-truth next token
 
-        layer_vals: List[float] = []
-        if activations["t0"] is not None:
-            correct_vec = model.lm_head.weight[tgt_token].detach()
-            layer_vals.append(torch.dot(activations["t0"].float(), correct_vec.float()).item())
-            for a, m in zip(activations["attn"], activations["mlp"]):
-                layer_vals.append(torch.dot(a.float(), correct_vec.float()).item())
-                layer_vals.append(torch.dot(m.float(), correct_vec.float()).item())
-
         layer_texts: List[Text] = []
-        if layer_vals:
-            lv = torch.tensor(layer_vals)
-            lv_norm = (lv - lv.min()) / (lv.max() - lv.min() + 1e-6)
-            for v, n in zip(lv.tolist(), lv_norm.tolist()):
-                r = int((1 - n) * 255); g = int(n * 255)
-                layer_texts.append(Text(f"{v:.2f}", style=f"bold #{r:02x}{g:02x}00"))
+        if args.activation_view != "none" and activations["t0"] is not None:
+            if args.activation_view == "target":
+                layer_vals: List[float] = []
+                correct_vec = model.lm_head.weight[tgt_token].detach()
+                layer_vals.append(torch.dot(activations["t0"].float(), correct_vec.float()).item())
+                for a, m in zip(activations["attn"], activations["mlp"]):
+                    layer_vals.append(torch.dot(a.float(), correct_vec.float()).item())
+                    layer_vals.append(torch.dot(m.float(), correct_vec.float()).item())
+                lv = torch.tensor(layer_vals)
+                lv_norm = (lv - lv.min()) / (lv.max() - lv.min() + 1e-6)
+                for v, n in zip(lv.tolist(), lv_norm.tolist()):
+                    r = int((1 - n) * 255); g = int(n * 255)
+                    layer_texts.append(Text(f"{v:.2f}", style=f"bold #{r:02x}{g:02x}00"))
+            else:  # args.activation_view == "rank"
+                emb = model.lm_head.weight.detach()
+                ranks: List[int] = []
+                t0_tok = torch.argmax(emb @ activations["t0"].float()).item()
+                ranks.append(int((logits[-1] > logits[-1, t0_tok]).sum().item()) + 1)
+                for a, m in zip(activations["attn"], activations["mlp"]):
+                    a_tok = torch.argmax(emb @ a.float()).item()
+                    ranks.append(int((logits[-1] > logits[-1, a_tok]).sum().item()) + 1)
+                    m_tok = torch.argmax(emb @ m.float()).item()
+                    ranks.append(int((logits[-1] > logits[-1, m_tok]).sum().item()) + 1)
+                for rnk in ranks:
+                    rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
+                    r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
+                    layer_texts.append(Text(str(rnk), style=f"bold #{r:02x}{g:02x}00"))
 
         probs = F.softmax(logits[-1], dim=-1)
         tgt_prob = probs[tgt_token].item()
