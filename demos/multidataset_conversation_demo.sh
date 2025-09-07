@@ -26,7 +26,7 @@ for dataset in "${datasets[@]}"; do
   pushd "data/${dataset}" > /dev/null
 
   # obtain dataset
-  if [ ! -f "input.txt" ]; then
+  if [ ! -f "input.txt" ] && [ ! -f "train.bin" &&  [ ! -f "val.bin" ] && [ ! -f "meta.pkl" ]; then
     echo -e "${MAGENTA}[OBTAIN]${RESET} Downloading dataset: ${dataset}"
     bash get_dataset.sh
   else
@@ -49,20 +49,19 @@ done
 # --- Run training ---
 echo -e "${CYAN}=== Starting training run ===${RESET}"
 python3 train.py \
-    --dataset "${datasets[0]}" \
+    --dataset "${datasets[1]}" \
     --training_mode multidataset \
-    --log_interval 1 \
+    --log_interval 10 \
     --batch_size 64 \
     --dataset_list "${datasets[@]}" \
     --dataset_sampling_probs 20 1 \
     --dataset_sampling_probs_final 1 20 \
     --dataset_sampling_probs_transition_method "linear" \
-    --max_iters 20000 \
+    --max_iters 10000 \
     --eval_interval 1000 \
     --sample_start_tokens $'\n\n#U:\nWhat do you think would be a good vacation plan?\n#B:\n' \
     --max_sample_tokens 256 \
-    --loss_fn focal \
-    --focal_gamma 2.0 \
     --init_from "scratch" \
+    --compile \
     --gns_type exact
 
