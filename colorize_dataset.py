@@ -123,9 +123,16 @@ def parse_args():
     p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
     p.add_argument("--plot_file", default="metrics.html", help="Output HTML file for Plotly metrics")
     p.add_argument("--focal_gamma", type=float, default=2.0, help="Focal loss gamma for metrics plotting")
-    p.add_argument("--activation_view", choices=["target", "rank", "none"], default="target",
-                   help="Per-layer activation columns: 'target' shows dot-product with target token, "
-                        "'rank' shows rank of token best aligned with activation, 'none' hides these columns")
+    p.add_argument(
+        "--activation_view",
+        choices=["target", "rank", "rank_word", "none"],
+        default="target",
+        help=(
+            "Per-layer activation columns: 'target' shows dot-product with target token, "
+            "'rank' shows rank of token best aligned with activation, 'rank_word' also "
+            "shows that token alongside its rank, and 'none' hides these columns"
+        ),
+    )
     return p.parse_args()
 
 
@@ -272,7 +279,7 @@ def main():
                 for v, n in zip(lv.tolist(), lv_norm.tolist()):
                     r = int((1 - n) * 255); g = int(n * 255)
                     layer_texts.append(Text(f"{v:.2f}", style=f"bold #{r:02x}{g:02x}00"))
-            else:  # args.activation_view == "rank"
+            elif args.activation_view == "rank":
                 emb = model.lm_head.weight.detach()
                 ranks: List[int] = []
                 t0_tok = torch.argmax(emb @ activations["t0"].float()).item()
@@ -286,6 +293,31 @@ def main():
                     rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
                     r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
                     layer_texts.append(Text(str(rnk), style=f"bold #{r:02x}{g:02x}00"))
+            else:  # args.activation_view == "rank_word"
+                emb = model.lm_head.weight.detach()
+                toks: List[int] = []
+                ranks: List[int] = []
+                t0_tok = torch.argmax(emb @ activations["t0"].float()).item()
+                toks.append(t0_tok)
+                ranks.append(int((logits[-1] > logits[-1, t0_tok]).sum().item()) + 1)
+                for a, m in zip(activations["attn"], activations["mlp"]):
+                    a_tok = torch.argmax(emb @ a.float()).item()
+                    toks.append(a_tok)
+                    ranks.append(int((logits[-1] > logits[-1, a_tok]).sum().item()) + 1)
+                    m_tok = torch.argmax(emb @ m.float()).item()
+                    toks.append(m_tok)
+                    ranks.append(int((logits[-1] > logits[-1, m_tok]).sum().item()) + 1)
+                for tok_id, rnk in zip(toks, ranks):
+                    token = decode([tok_id])
+                    if args.max_token_chars >= 0:
+                        token = token[: args.max_token_chars]
+                    if args.escape_whitespace:
+                        token = _escape_ws(token)
+                    rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
+                    r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
+                    layer_texts.append(
+                        Text(f"{token}:{rnk}", style=f"bold #{r:02x}{g:02x}00")
+                    )
 
         probs = F.softmax(logits[-1], dim=-1)
         tgt_prob = probs[tgt_token].item()
