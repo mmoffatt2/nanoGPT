@@ -178,6 +178,11 @@ def edgellm_asic_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     # Therefore subtract initial before merging
     x = (chip_output - x_quantized_residual_initial) + x
 
+    if block.quantization_dict["quantize_asic_offchip_residual"]:
+        num_bits = block.quantization_dict["quantize_asic_bits"]
+        quant_method = block.quantization_dict["activations_quant_method"]
+        x = fake_quantize_act(block, "asic_offchip_residual", x, num_bits, quant_method, iter_num)
+
     # Off-Chip: MLP Post-LN
     if block.use_post_ln_mlp:
         x = block.post_ln_mlp(x)
@@ -328,6 +333,7 @@ class Block(nn.Module):
             # Special Quantization Setup
             self.quantization_dict = {}
             self.quantization_dict["quantize_asic_prenorm"] = config.quantize_asic_prenorm
+            self.quantization_dict["quantize_asic_offchip_residual"] = config.quantize_asic_offchip_residual
             self.quantization_dict["quantize_asic_bits"] = config.quantize_asic_bits
             self.quantization_dict["activations_quant_method"] = config.activations_quant_method
             self.full_quant_iteration = config.full_quant_iteration
