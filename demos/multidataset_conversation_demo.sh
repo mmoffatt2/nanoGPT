@@ -57,11 +57,11 @@ python3 train.py \
     --dataset_sampling_probs 20 1 \
     --dataset_sampling_probs_final 1 20 \
     --dataset_sampling_probs_transition_method "linear" \
-    --max_iters 10000 \
-    --eval_interval 1000 \
+    --use_rotary_embeddings \
+    --no-use_abs_pos_embeddings \
+    --max_iters 5000 \
+    --eval_interval 5000 \
     --sample_start_tokens $'\n\n#U:\nWhat do you think would be a good vacation plan?\n#B:\n' \
-    --max_sample_tokens 256 \
     --init_from "scratch" \
-    --compile \
-    --gns_type exact
+    --compile
 
