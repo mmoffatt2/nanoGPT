@@ -133,6 +133,13 @@ def parse_args():
             "shows that token alongside its rank, and 'none' hides these columns"
         ),
     )
+    p.add_argument(
+        "--components",
+        choices=["wte", "attn", "mlp", "resid"],
+        nargs="+",
+        default=["wte", "attn", "mlp"],
+        help="Activation components to display in activation_view modes",
+    )
     return p.parse_args()
 
 
@@ -200,10 +207,17 @@ def main():
         table.add_column("p_tgt", justify="right", no_wrap=True)
         table.add_column("p_left", justify="right", no_wrap=True)
         if args.activation_view != "none":
-            table.add_column("t0", justify="right", no_wrap=True)
+            if "wte" in args.components:
+                table.add_column("t0", justify="right", no_wrap=True)
             for i in range(model.config.n_layer):
-                table.add_column(f"a{i+1}", justify="right", no_wrap=True)
-                table.add_column(f"m{i+1}", justify="right", no_wrap=True)
+                if "attn" in args.components:
+                    table.add_column(f"a{i+1}", justify="right", no_wrap=True)
+                if "resid" in args.components:
+                    table.add_column(f"ar{i+1}", justify="right", no_wrap=True)
+                if "mlp" in args.components:
+                    table.add_column(f"m{i+1}", justify="right", no_wrap=True)
+                if "resid" in args.components:
+                    table.add_column(f"mr{i+1}", justify="right", no_wrap=True)
         for i in range(args.topk):
             table.add_column(f"top{i+1}", justify="center", no_wrap=True)
 
@@ -223,7 +237,7 @@ def main():
 
         ctx_tok = torch.from_numpy(seq[:-1].astype(np.int64))[None].to(args.device)
 
-        activations = {"t0": None, "attn": [], "mlp": []}
+        activations = {"t0": None, "attn": [], "mlp": [], "ar": [], "mr": []}
         handles = []
         if args.display != "token" and args.activation_view != "none":
             def t0_hook(module, inp, out):
@@ -261,19 +275,36 @@ def main():
         for h in handles:
             h.remove()
 
+        if args.activation_view != "none" and "resid" in args.components and activations["t0"] is not None:
+            resid = activations["t0"].float().clone()
+            for a, m in zip(activations["attn"], activations["mlp"]):
+                resid = resid + a.float()
+                activations["ar"].append(resid.clone())
+                resid = resid + m.float()
+                activations["mr"].append(resid.clone())
+
         logits = logits.squeeze(0)  # (ctx_len, vocab)
         ctx_len = logits.size(0)
         tgt_token = int(seq[-1])  # ground-truth next token
 
         layer_texts: List[Text] = []
         if args.activation_view != "none" and activations["t0"] is not None:
+            def iter_vecs():
+                if "wte" in args.components:
+                    yield activations["t0"]
+                for i in range(model.config.n_layer):
+                    if "attn" in args.components:
+                        yield activations["attn"][i]
+                    if "resid" in args.components:
+                        yield activations["ar"][i]
+                    if "mlp" in args.components:
+                        yield activations["mlp"][i]
+                    if "resid" in args.components:
+                        yield activations["mr"][i]
+
             if args.activation_view == "target":
-                layer_vals: List[float] = []
                 correct_vec = model.lm_head.weight[tgt_token].detach()
-                layer_vals.append(torch.dot(activations["t0"].float(), correct_vec.float()).item())
-                for a, m in zip(activations["attn"], activations["mlp"]):
-                    layer_vals.append(torch.dot(a.float(), correct_vec.float()).item())
-                    layer_vals.append(torch.dot(m.float(), correct_vec.float()).item())
+                layer_vals = [torch.dot(v.float(), correct_vec.float()).item() for v in iter_vecs()]
                 lv = torch.tensor(layer_vals)
                 lv_norm = (lv - lv.min()) / (lv.max() - lv.min() + 1e-6)
                 for v, n in zip(lv.tolist(), lv_norm.tolist()):
@@ -281,14 +312,11 @@ def main():
                     layer_texts.append(Text(f"{v:.2f}", style=f"bold #{r:02x}{g:02x}00"))
             elif args.activation_view == "rank":
                 emb = model.lm_head.weight.detach()
-                ranks: List[int] = []
-                t0_tok = torch.argmax(emb @ activations["t0"].float()).item()
-                ranks.append(int((logits[-1] > logits[-1, t0_tok]).sum().item()) + 1)
-                for a, m in zip(activations["attn"], activations["mlp"]):
-                    a_tok = torch.argmax(emb @ a.float()).item()
-                    ranks.append(int((logits[-1] > logits[-1, a_tok]).sum().item()) + 1)
-                    m_tok = torch.argmax(emb @ m.float()).item()
-                    ranks.append(int((logits[-1] > logits[-1, m_tok]).sum().item()) + 1)
+                ranks = []
+                for vec in iter_vecs():
+                    tok = torch.argmax(emb @ vec.float()).item()
+                    rnk = int((logits[-1] > logits[-1, tok]).sum().item()) + 1
+                    ranks.append(rnk)
                 for rnk in ranks:
                     rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
                     r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
@@ -297,16 +325,10 @@ def main():
                 emb = model.lm_head.weight.detach()
                 toks: List[int] = []
                 ranks: List[int] = []
-                t0_tok = torch.argmax(emb @ activations["t0"].float()).item()
-                toks.append(t0_tok)
-                ranks.append(int((logits[-1] > logits[-1, t0_tok]).sum().item()) + 1)
-                for a, m in zip(activations["attn"], activations["mlp"]):
-                    a_tok = torch.argmax(emb @ a.float()).item()
-                    toks.append(a_tok)
-                    ranks.append(int((logits[-1] > logits[-1, a_tok]).sum().item()) + 1)
-                    m_tok = torch.argmax(emb @ m.float()).item()
-                    toks.append(m_tok)
-                    ranks.append(int((logits[-1] > logits[-1, m_tok]).sum().item()) + 1)
+                for vec in iter_vecs():
+                    tok = torch.argmax(emb @ vec.float()).item()
+                    toks.append(tok)
+                    ranks.append(int((logits[-1] > logits[-1, tok]).sum().item()) + 1)
                 for tok_id, rnk in zip(toks, ranks):
                     token = decode([tok_id])
                     if args.max_token_chars >= 0:
@@ -315,9 +337,7 @@ def main():
                         token = _escape_ws(token)
                     rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
                     r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
-                    layer_texts.append(
-                        Text(f"{token}:{rnk}", style=f"bold #{r:02x}{g:02x}00")
-                    )
+                    layer_texts.append(Text(f"{token}:{rnk}", style=f"bold #{r:02x}{g:02x}00"))
 
         probs = F.softmax(logits[-1], dim=-1)
         tgt_prob = probs[tgt_token].item()
