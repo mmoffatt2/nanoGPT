@@ -465,6 +465,7 @@ class GPTConfig:
     quantize_mlp_act_output: bool = False
     quantize_mlp_act_output_bits: int = None
     quantize_asic_prenorm: bool = False
+    quantize_asic_offchip_residual: bool = False
     quantize_asic_bits: int = None
     store_activations: bool = False
 
