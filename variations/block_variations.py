@@ -1,6 +1,7 @@
 """Block definitions and forward variations."""
 from __future__ import annotations
 from typing import Callable
+from functools import partial
 import torch
 import torch.nn as nn
 import torch.utils.checkpoint as checkpoint
@@ -344,7 +345,7 @@ class Block(nn.Module):
             variant = "attn_then_mlp"
 
         # Set Block Forward Variant
-        self.block_forward = block_forward_variations[variant]
+        self.block_forward = partial(block_forward_variations[variant], self)
 
         ## Instantiate norms for Block Forward Variant
         normalization_setup_variations[variant](self, config, norm_cls)
@@ -368,6 +369,6 @@ class Block(nn.Module):
 
     def forward(self, x: torch.Tensor, iter_num: int):
         if self.use_gradient_checkpointing and x.requires_grad:
-            return checkpoint.checkpoint(self.block_forward, self, x, iter_num, use_reentrant=False)
-        return self.block_forward(self, x, iter_num)
+            return checkpoint.checkpoint(self.block_forward, x, iter_num, use_reentrant=False)
+        return self.block_forward(x, iter_num)
 
