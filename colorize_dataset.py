@@ -123,6 +123,23 @@ def parse_args():
     p.add_argument("--plot_metrics", action="store_true", help="Generate Plotly graphs for prediction metrics")
     p.add_argument("--plot_file", default="metrics.html", help="Output HTML file for Plotly metrics")
     p.add_argument("--focal_gamma", type=float, default=2.0, help="Focal loss gamma for metrics plotting")
+    p.add_argument(
+        "--activation_view",
+        choices=["target", "rank", "rank_word", "none"],
+        default="target",
+        help=(
+            "Per-layer activation columns: 'target' shows dot-product with target token, "
+            "'rank' shows rank of token best aligned with activation, 'rank_word' also "
+            "shows that token alongside its rank, and 'none' hides these columns"
+        ),
+    )
+    p.add_argument(
+        "--components",
+        choices=["wte", "attn", "mlp", "resid"],
+        nargs="+",
+        default=["wte", "attn", "mlp"],
+        help="Activation components to display in activation_view modes",
+    )
     return p.parse_args()
 
 
@@ -183,14 +200,26 @@ def main():
         ids: List[int] = []
         scalars: List[float] = []
     else:
-        table = Table(show_header=False, box=None, pad_edge=False)
+        table = Table(show_header=True, box=None, pad_edge=False)
         table.add_column("target", no_wrap=True)
         table.add_column("xent", justify="right", no_wrap=True)
         table.add_column("rank", justify="right", no_wrap=True)
         table.add_column("p_tgt", justify="right", no_wrap=True)
         table.add_column("p_left", justify="right", no_wrap=True)
-        for _ in range(args.topk):
-            table.add_column(justify="center", no_wrap=True)
+        if args.activation_view != "none":
+            if "wte" in args.components:
+                table.add_column("t0", justify="right", no_wrap=True)
+            for i in range(model.config.n_layer):
+                if "attn" in args.components:
+                    table.add_column(f"a{i+1}", justify="right", no_wrap=True)
+                if "resid" in args.components:
+                    table.add_column(f"ar{i+1}", justify="right", no_wrap=True)
+                if "mlp" in args.components:
+                    table.add_column(f"m{i+1}", justify="right", no_wrap=True)
+                if "resid" in args.components:
+                    table.add_column(f"mr{i+1}", justify="right", no_wrap=True)
+        for i in range(args.topk):
+            table.add_column(f"top{i+1}", justify="center", no_wrap=True)
 
     if args.plot_metrics:
         metrics_rank: List[float] = []
@@ -207,11 +236,108 @@ def main():
             break  # not enough tokens to predict next
 
         ctx_tok = torch.from_numpy(seq[:-1].astype(np.int64))[None].to(args.device)
+
+        activations = {"t0": None, "attn": [], "mlp": [], "ar": [], "mr": []}
+        handles = []
+        if args.display != "token" and args.activation_view != "none":
+            def t0_hook(module, inp, out):
+                activations["t0"] = out[0, -1, :].detach()
+
+            handles.append(model.transformer.drop.register_forward_hook(t0_hook))
+
+            for blk in model.transformer.h:
+                def make_attn_hook(blk):
+                    def hook(module, inp, out):
+                        outp = out
+                        if getattr(blk, "use_peri_ln_attn", False):
+                            outp = blk.peri_ln_attn(outp)
+                        if getattr(blk, "attn_resid_scaler", None):
+                            outp = blk.attn_resid_scaler(outp)
+                        activations["attn"].append(outp[0, -1, :].detach())
+                    return hook
+
+                def make_mlp_hook(blk):
+                    def hook(module, inp, out):
+                        outp = out
+                        if getattr(blk, "use_peri_ln_mlp", False):
+                            outp = blk.peri_ln_mlp(outp)
+                        if getattr(blk, "mlp_resid_scaler", None):
+                            outp = blk.mlp_resid_scaler(outp)
+                        activations["mlp"].append(outp[0, -1, :].detach())
+                    return hook
+
+                handles.append(blk.attn.register_forward_hook(make_attn_hook(blk)))
+                handles.append(blk.mlp.register_forward_hook(make_mlp_hook(blk)))
+
         with autocast_ctx:
             logits, _ = model(ctx_tok)
+
+        for h in handles:
+            h.remove()
+
+        if args.activation_view != "none" and "resid" in args.components and activations["t0"] is not None:
+            resid = activations["t0"].float().clone()
+            for a, m in zip(activations["attn"], activations["mlp"]):
+                resid = resid + a.float()
+                activations["ar"].append(resid.clone())
+                resid = resid + m.float()
+                activations["mr"].append(resid.clone())
+
         logits = logits.squeeze(0)  # (ctx_len, vocab)
         ctx_len = logits.size(0)
         tgt_token = int(seq[-1])  # ground-truth next token
+
+        layer_texts: List[Text] = []
+        if args.activation_view != "none" and activations["t0"] is not None:
+            def iter_vecs():
+                if "wte" in args.components:
+                    yield activations["t0"]
+                for i in range(model.config.n_layer):
+                    if "attn" in args.components:
+                        yield activations["attn"][i]
+                    if "resid" in args.components:
+                        yield activations["ar"][i]
+                    if "mlp" in args.components:
+                        yield activations["mlp"][i]
+                    if "resid" in args.components:
+                        yield activations["mr"][i]
+
+            if args.activation_view == "target":
+                correct_vec = model.lm_head.weight[tgt_token].detach()
+                layer_vals = [torch.dot(v.float(), correct_vec.float()).item() for v in iter_vecs()]
+                lv = torch.tensor(layer_vals)
+                lv_norm = (lv - lv.min()) / (lv.max() - lv.min() + 1e-6)
+                for v, n in zip(lv.tolist(), lv_norm.tolist()):
+                    r = int((1 - n) * 255); g = int(n * 255)
+                    layer_texts.append(Text(f"{v:.2f}", style=f"bold #{r:02x}{g:02x}00"))
+            elif args.activation_view == "rank":
+                emb = model.lm_head.weight.detach()
+                ranks = []
+                for vec in iter_vecs():
+                    tok = torch.argmax(emb @ vec.float()).item()
+                    rnk = int((logits[-1] > logits[-1, tok]).sum().item()) + 1
+                    ranks.append(rnk)
+                for rnk in ranks:
+                    rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
+                    r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
+                    layer_texts.append(Text(str(rnk), style=f"bold #{r:02x}{g:02x}00"))
+            else:  # args.activation_view == "rank_word"
+                emb = model.lm_head.weight.detach()
+                toks: List[int] = []
+                ranks: List[int] = []
+                for vec in iter_vecs():
+                    tok = torch.argmax(emb @ vec.float()).item()
+                    toks.append(tok)
+                    ranks.append(int((logits[-1] > logits[-1, tok]).sum().item()) + 1)
+                for tok_id, rnk in zip(toks, ranks):
+                    token = decode([tok_id])
+                    if args.max_token_chars >= 0:
+                        token = token[: args.max_token_chars]
+                    if args.escape_whitespace:
+                        token = _escape_ws(token)
+                    rank_norm = 1 - (min(rnk, args.rank_red) - 1) / max(args.rank_red - 1, 1)
+                    r = int((1 - rank_norm) * 255); g = int(rank_norm * 255)
+                    layer_texts.append(Text(f"{token}:{rnk}", style=f"bold #{r:02x}{g:02x}00"))
 
         probs = F.softmax(logits[-1], dim=-1)
         tgt_prob = probs[tgt_token].item()
@@ -281,7 +407,7 @@ def main():
             if args.bold_target:
                 target_style = f"bold {target_style}" if target_style else "bold"
 
-            row = [Text(target_word, style=target_style), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + words
+            row = [Text(target_word, style=target_style), f"{ce:.4f}", rank_text, p_tgt_text, p_left_text] + layer_texts + words
             table.add_row(*row)
 
         # advance
