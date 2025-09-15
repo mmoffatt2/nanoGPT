@@ -226,7 +226,9 @@ def edgellm_asic_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     # Note:
     # chip_output = x_quantized_residual_initial + mlp_out + attn_out
     # Therefore subtract initial before merging
-    x = (chip_output - x_quantized_residual_initial) + x
+    # x = (chip_output - x_quantized_residual_initial) + x
+    adj_chip_output = chip_output - x_quantized_residual_initial
+    x = block._combine_resid("mlp", x, adj_chip_output)
 
     if block.quantization_dict["quantize_asic_offchip_residual"]:
         num_bits = block.quantization_dict["quantize_asic_bits"]
