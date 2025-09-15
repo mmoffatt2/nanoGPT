@@ -60,7 +60,7 @@ def make_alpha_fn(mode: str, init: float, param=None, vec=None):
     if mode == "learned":
         return lambda _out: param
     if mode == "dot":
-        return lambda out: init * (1 + (out * vec).sum(dim=-1, keepdim=True))
+        return lambda out: init * (param + (out * vec).sum(dim=-1, keepdim=True))
     raise ValueError(f"unknown alpha mode {mode}")
 
 # -----------------------
@@ -428,10 +428,12 @@ class Block(nn.Module):
             self.attn_alpha_param = nn.Parameter(torch.tensor(self.attn_alpha))
         elif self.attn_alpha_mode == "dot":
             self.attn_alpha_vec = nn.Parameter(torch.zeros(config.n_embd))
+            self.attn_alpha_param = nn.Parameter(torch.tensor(self.attn_alpha))
         if self.mlp_alpha_mode == "learned":
             self.mlp_alpha_param = nn.Parameter(torch.tensor(self.mlp_alpha))
         elif self.mlp_alpha_mode == "dot":
             self.mlp_alpha_vec = nn.Parameter(torch.zeros(config.n_embd))
+            self.mlp_alpha_param = nn.Parameter(torch.tensor(self.mlp_alpha))
 
         self.alpha_fns = {
             "attn": make_alpha_fn(self.attn_alpha_mode, self.attn_alpha,
