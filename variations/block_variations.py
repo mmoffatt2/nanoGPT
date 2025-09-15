@@ -35,11 +35,11 @@ def slerp(a: torch.Tensor, b: torch.Tensor, alpha: float, eps: float) -> torch.T
     return torch.where(close, lerp, interp)
 
 
-def add_residual(x: torch.Tensor, out: torch.Tensor, *_args) -> torch.Tensor:
+def add_residual(x: torch.Tensor, out: torch.Tensor, alpha: torch.Tensor, eps: float) -> torch.Tensor:
     return x + out
 
 
-def lerp_residual(x: torch.Tensor, out: torch.Tensor, alpha: torch.Tensor, _eps) -> torch.Tensor:
+def lerp_residual(x: torch.Tensor, out: torch.Tensor, alpha: torch.Tensor, eps: float) -> torch.Tensor:
     return (1 - alpha) * x + alpha * (x + out)
 
 
@@ -52,6 +52,16 @@ residual_combine_dict = {
     "lerp": lerp_residual,
     "slerp": slerp_residual,
 }
+
+
+def make_alpha_fn(mode: str, init: float, param=None, vec=None):
+    if mode == "fixed":
+        return lambda _out: init
+    if mode == "learned":
+        return lambda _out: param
+    if mode == "dot":
+        return lambda out: init * (1 + (out * vec).sum(dim=-1, keepdim=True))
+    raise ValueError(f"unknown alpha mode {mode}")
 
 # -----------------------
 # Block Forward Variations
@@ -84,12 +94,7 @@ def parallel_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
         mlp_out = block.mlp_resid_scaler(mlp_out)
 
     combined = attn_out + mlp_out
-    resid_fn = residual_combine_dict[block.attn_resid_type]
-    if block.attn_resid_type == "add":
-        x = resid_fn(x, combined)
-    else:
-        alpha = block._get_alpha("attn", combined)
-        x = resid_fn(x, combined, alpha, block.residual_slerp_eps)
+    x = block._combine_resid("attn", x, combined)
 
     if block.use_post_ln:
         x = block.post_ln(x)
@@ -118,12 +123,7 @@ def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor
     if block.attn_resid_scaler is not None:
         attn_out = block.attn_resid_scaler(attn_out)
 
-    resid_fn = residual_combine_dict[block.attn_resid_type]
-    if block.attn_resid_type == "add":
-        x = resid_fn(x, attn_out)
-    else:
-        alpha = block._get_alpha("attn", attn_out)
-        x = resid_fn(x, attn_out, alpha, block.residual_slerp_eps)
+    x = block._combine_resid("attn", x, attn_out)
 
     if block.use_post_ln_attn:
         x = block.post_ln_attn(x)
@@ -146,12 +146,7 @@ def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor
     if block.mlp_resid_scaler is not None:
         mlp_out = block.mlp_resid_scaler(mlp_out)
 
-    resid_fn = residual_combine_dict[block.mlp_resid_type]
-    if block.mlp_resid_type == "add":
-        x = resid_fn(x, mlp_out)
-    else:
-        alpha = block._get_alpha("mlp", mlp_out)
-        x = resid_fn(x, mlp_out, alpha, block.residual_slerp_eps)
+    x = block._combine_resid("mlp", x, mlp_out)
 
     if block.use_post_ln_mlp:
         x = block.post_ln_mlp(x)
@@ -430,6 +425,20 @@ class Block(nn.Module):
         elif self.mlp_alpha_mode == "dot":
             self.mlp_alpha_vec = nn.Parameter(torch.zeros(config.n_embd))
 
+        self.alpha_fns = {
+            "attn": make_alpha_fn(self.attn_alpha_mode, self.attn_alpha,
+                                  getattr(self, "attn_alpha_param", None),
+                                  getattr(self, "attn_alpha_vec", None)),
+            "mlp": make_alpha_fn(self.mlp_alpha_mode, self.mlp_alpha,
+                                 getattr(self, "mlp_alpha_param", None),
+                                 getattr(self, "mlp_alpha_vec", None)),
+        }
+
+        self.resid_fns = {
+            "attn": residual_combine_dict[self.attn_resid_type],
+            "mlp": residual_combine_dict[self.mlp_resid_type],
+        }
+
         # Gradient checkpointing
         self.use_gradient_checkpointing = getattr(config, "use_gradient_checkpointing", False)
 
@@ -438,24 +447,7 @@ class Block(nn.Module):
             return checkpoint.checkpoint(self.block_forward, x, iter_num, use_reentrant=False)
         return self.block_forward(x, iter_num)
 
-    def _get_alpha(self, kind: str, out: torch.Tensor) -> torch.Tensor:
-        if kind == "attn":
-            mode = self.attn_alpha_mode
-            init = self.attn_alpha
-            param = getattr(self, "attn_alpha_param", None)
-            vec = getattr(self, "attn_alpha_vec", None)
-        else:
-            mode = self.mlp_alpha_mode
-            init = self.mlp_alpha
-            param = getattr(self, "mlp_alpha_param", None)
-            vec = getattr(self, "mlp_alpha_vec", None)
-
-        if mode == "fixed":
-            return init
-        if mode == "learned":
-            return param
-        if mode == "dot":
-            dot = (out * vec).sum(dim=-1, keepdim=True)
-            return init * (1 + dot)
-        raise ValueError(f"unknown alpha mode {mode}")
+    def _combine_resid(self, kind: str, x: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+        alpha = self.alpha_fns[kind](out)
+        return self.resid_fns[kind](x, out, alpha, self.residual_slerp_eps)
 
