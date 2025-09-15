@@ -937,7 +937,7 @@ class Trainer:
                             target_vecs = lm_head.weight[Y]
                             cos = F.cosine_similarity(
                                 ln_f_out[0].float(), target_vecs.float(), dim=-1
-                            ).abs()
+                            )
                             ln_f_cosines.append(cos)
                 out['datasets'][dataset] = {
                         'train': dataset_losses['train'].mean(),
@@ -952,7 +952,7 @@ class Trainer:
                         'target_rank_95': torch.quantile(torch.cat(target_ranks), 0.95) if target_ranks else torch.tensor(float('nan')),
                         'left_prob_95': torch.quantile(torch.cat(left_inclusive_probs).float(), 0.95) if left_inclusive_probs else torch.tensor(float('nan')),
                         'ln_f_cosine': torch.cat(ln_f_cosines).mean() if ln_f_cosines else torch.tensor(float('nan')),
-                        'ln_f_cosine_95': torch.quantile(torch.cat(ln_f_cosines), 0.95) if ln_f_cosines else torch.tensor(float('nan')),
+                        'ln_f_cosine_95': torch.quantile(torch.cat(ln_f_cosines), 0.05) if ln_f_cosines else torch.tensor(float('nan')),
                         }
             out['val'] = out['datasets'][self.args.dataset]['val']
             out['val_std'] = out['datasets'][self.args.dataset]['val_std']
@@ -1053,7 +1053,7 @@ class Trainer:
                         target_vecs = lm_head.weight[Y]
                         cos = F.cosine_similarity(
                             ln_f_out[0].float(), target_vecs.float(), dim=-1
-                        ).abs()
+                        )
                         ln_f_cosines.append(cos)
                 out[split] = losses.mean()
                 out[split + "_std"] = losses.std()
@@ -1066,7 +1066,7 @@ class Trainer:
                     out['target_rank_95'] = torch.quantile(torch.cat(target_ranks), 0.95) if target_ranks else torch.tensor(float('nan'))
                     out['left_prob_95'] = torch.quantile(torch.cat(left_inclusive_probs).float(), 0.95) if left_inclusive_probs else torch.tensor(float('nan'))
                     out['ln_f_cosine'] = torch.cat(ln_f_cosines).mean() if ln_f_cosines else torch.tensor(float('nan'))
-                    out['ln_f_cosine_95'] = torch.quantile(torch.cat(ln_f_cosines), 0.95) if ln_f_cosines else torch.tensor(float('nan'))
+                    out['ln_f_cosine_95'] = torch.quantile(torch.cat(ln_f_cosines), 0.05) if ln_f_cosines else torch.tensor(float('nan'))
 
         # compute statistics from a single validation batch
         if self.compute_model_stats:

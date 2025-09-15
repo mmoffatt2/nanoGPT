@@ -377,12 +377,28 @@ class MonitorApp(App):
                     nums = [v for v in vals if _is_real_num(v)]
                     if not nums:
                         continue
+                    ORANGE = "#ff7f00"
+                    if col_name in {"avg_ln_f_cosine", "ln_f_cosine_95"}:
+                        cmap = []
+                        for v in vals:
+                            if v is None or (isinstance(v, float) and math.isnan(v)):
+                                cmap.append(ORANGE)
+                            elif _is_real_num(v):
+                                t = max(0.0, min(1.0, v))
+                                r = int(255 * (1 - t))
+                                g = int(255 * t)
+                                cmap.append(f"#{r:02x}{g:02x}00")
+                            elif isinstance(v, bool):
+                                cmap.append("#00ff00" if v else "#ff0000")
+                            else:
+                                cmap.append(ORANGE)
+                        colour_by_col[col_idx] = cmap
+                        continue
                     lo, hi = min(nums), max(nums)
                     if hi == lo:
                         hi += 1e-8
                     rng = hi - lo
                     cmap = []
-                    ORANGE = "#ff7f00"
                     for v in vals:
                         if v is None or (isinstance(v, float) and math.isnan(v)):
                             cmap.append(ORANGE)          # special orange
