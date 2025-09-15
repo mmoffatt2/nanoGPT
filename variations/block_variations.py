@@ -93,9 +93,11 @@ def parallel_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor:
     if block.mlp_resid_scaler is not None:
         mlp_out = block.mlp_resid_scaler(mlp_out)
 
+    # Skip Connection
     combined = attn_out + mlp_out
     x = block._combine_resid("attn", x, combined)
 
+    # Post-LN
     if block.use_post_ln:
         x = block.post_ln(x)
 
@@ -123,8 +125,10 @@ def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor
     if block.attn_resid_scaler is not None:
         attn_out = block.attn_resid_scaler(attn_out)
 
+    # Attn Skip Connection
     x = block._combine_resid("attn", x, attn_out)
 
+    # Attn Post-LN
     if block.use_post_ln_attn:
         x = block.post_ln_attn(x)
 
@@ -146,8 +150,10 @@ def attn_then_mlp_forward(block, x: torch.Tensor, iter_num: int) -> torch.Tensor
     if block.mlp_resid_scaler is not None:
         mlp_out = block.mlp_resid_scaler(mlp_out)
 
+    # MLP Skip Connection
     x = block._combine_resid("mlp", x, mlp_out)
 
+    # MLP Post-LN
     if block.use_post_ln_mlp:
         x = block.post_ln_mlp(x)
 
@@ -448,6 +454,7 @@ class Block(nn.Module):
         return self.block_forward(x, iter_num)
 
     def _combine_resid(self, kind: str, x: torch.Tensor, out: torch.Tensor) -> torch.Tensor:
+        """Helper method to streamline forward block skip connections"""
         alpha = self.alpha_fns[kind](out)
         return self.resid_fns[kind](x, out, alpha, self.residual_slerp_eps)
 
