@@ -417,8 +417,8 @@ class Block(nn.Module):
         self.mlp_resid_type = getattr(config, "mlp_residual_combination", "add")
         self.residual_slerp_eps = getattr(config, "residual_slerp_eps", 0.0)
 
-        self.attn_alpha = getattr(config, "attn_residual_alpha", 1.0)
-        self.mlp_alpha = getattr(config, "mlp_residual_alpha", 1.0)
+        self.attn_alpha = getattr(config, "attn_residual_alpha", 0.05)
+        self.mlp_alpha = getattr(config, "mlp_residual_alpha", 0.05)
         self.attn_alpha_mode = getattr(config, "attn_residual_alpha_type", "fixed")
         self.mlp_alpha_mode = getattr(config, "mlp_residual_alpha_type", "fixed")
 
