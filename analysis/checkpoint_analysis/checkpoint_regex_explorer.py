@@ -6,7 +6,7 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 import torch
 from rich import box
@@ -37,6 +37,95 @@ class L2NormStats:
     std: float
     kurtosis: float
     histogram_path: Optional[Path]
+
+
+@dataclass
+class ColumnSpec:
+    """Configuration for a numeric column rendered with heatmap colorization."""
+
+    header: str
+    extractor: Callable[[Any], Optional[float]]
+    formatter: Callable[[Any], str]
+    reverse: bool = False
+
+
+def _compute_column_ranges(
+    data_rows: Iterable[Any], specs: List[ColumnSpec]
+) -> Dict[str, Tuple[Optional[float], Optional[float]]]:
+    ranges: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+    for spec in specs:
+        values: List[float] = []
+        for row in data_rows:
+            value = spec.extractor(row)
+            if value is None:
+                continue
+            try:
+                numeric_value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if math.isnan(numeric_value) or math.isinf(numeric_value):
+                continue
+            values.append(numeric_value)
+        if values:
+            ranges[spec.header] = (min(values), max(values))
+        else:
+            ranges[spec.header] = (None, None)
+    return ranges
+
+
+def _heatmap_color(
+    value: float,
+    min_value: Optional[float],
+    max_value: Optional[float],
+    reverse: bool,
+) -> Optional[str]:
+    if min_value is None or max_value is None:
+        return None
+    if math.isclose(max_value, min_value):
+        return None
+
+    clamped = max(min(value, max_value), min_value)
+    norm = (clamped - min_value) / (max_value - min_value)
+    norm = max(0.0, min(1.0, norm))
+    if reverse:
+        norm = 1.0 - norm
+
+    green = (46, 204, 64)
+    red = (255, 65, 54)
+    r = int(round(green[0] + (red[0] - green[0]) * norm))
+    g = int(round(green[1] + (red[1] - green[1]) * norm))
+    b = int(round(green[2] + (red[2] - green[2]) * norm))
+    return f"#{r:02x}{g:02x}{b:02x}"
+
+
+def _format_with_color(
+    spec: ColumnSpec,
+    data: Any,
+    ranges: Dict[str, Tuple[Optional[float], Optional[float]]],
+    *,
+    colorize: bool,
+) -> str:
+    text = spec.formatter(data)
+    if not colorize:
+        return text
+
+    value = spec.extractor(data)
+    if value is None:
+        return text
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return text
+
+    if math.isnan(numeric_value) or math.isinf(numeric_value):
+        return text
+
+    min_value, max_value = ranges.get(spec.header, (None, None))
+    color = _heatmap_color(numeric_value, min_value, max_value, spec.reverse)
+    if color is None:
+        return text
+    return f"[{color}]{text}[/]"
 
 
 def parse_args() -> argparse.Namespace:
@@ -78,6 +167,13 @@ def parse_args() -> argparse.Namespace:
         default=50,
         help="Number of bins used when plotting L2 norm histograms",
     )
+    parser.add_argument(
+        "--no-colorize",
+        dest="colorize",
+        action="store_false",
+        help="Disable heatmap colorization in stdout tables",
+    )
+    parser.set_defaults(colorize=True)
     return parser.parse_args()
 
 
@@ -132,6 +228,7 @@ def tensor_stats(tensor: torch.Tensor) -> Dict[str, float]:
                 "max": float("nan"),
                 "mean": float("nan"),
                 "std": float("nan"),
+                "kurtosis": float("nan"),
                 "median": float("nan"),
                 "q1": float("nan"),
                 "q3": float("nan"),
@@ -146,6 +243,11 @@ def tensor_stats(tensor: torch.Tensor) -> Dict[str, float]:
         max_val = flat.max().item()
         mean = flat.mean().item()
         std = flat.std(unbiased=False).item()
+        var = std * std
+        if var > 0:
+            kurtosis = torch.mean((flat - mean) ** 4).item() / (var ** 2)
+        else:
+            kurtosis = float("nan")
         median = flat.median().item()
         q1 = torch.quantile(flat, 0.25).item()
         q3 = torch.quantile(flat, 0.75).item()
@@ -160,6 +262,7 @@ def tensor_stats(tensor: torch.Tensor) -> Dict[str, float]:
             "max": max_val,
             "mean": mean,
             "std": std,
+            "kurtosis": kurtosis,
             "median": median,
             "q1": q1,
             "q3": q3,
@@ -297,10 +400,87 @@ def save_l2_histogram(
     return file_path
 
 
-def render_table(rows: Iterable[Tuple[str, Dict[str, float]]], max_rows: int | None) -> None:
+def render_table(
+    rows: Iterable[Tuple[str, Dict[str, float]]],
+    max_rows: int | None,
+    *,
+    colorize: bool,
+) -> None:
     rows = list(rows)
     total_rows = len(rows)
     display_rows = rows if max_rows is None else rows[:max_rows]
+    stats_rows = [stats for _, stats in rows]
+
+    column_specs: List[ColumnSpec] = [
+        ColumnSpec(
+            "# Elem",
+            extractor=lambda stats: float(stats["numel"]),
+            formatter=lambda stats: f"{int(stats['numel']):,}",
+        ),
+        ColumnSpec(
+            "Min",
+            extractor=lambda stats: float(stats["min"]),
+            formatter=lambda stats: f"{stats['min']:.6g}",
+            reverse=True,
+        ),
+        ColumnSpec(
+            "Max",
+            extractor=lambda stats: float(stats["max"]),
+            formatter=lambda stats: f"{stats['max']:.6g}",
+        ),
+        ColumnSpec(
+            "Mean",
+            extractor=lambda stats: float(stats["mean"]),
+            formatter=lambda stats: f"{stats['mean']:.6g}",
+        ),
+        ColumnSpec(
+            "Std",
+            extractor=lambda stats: float(stats["std"]),
+            formatter=lambda stats: f"{stats['std']:.6g}",
+        ),
+        ColumnSpec(
+            "Kurtosis",
+            extractor=lambda stats: None
+            if math.isnan(stats["kurtosis"])
+            else float(stats["kurtosis"]),
+            formatter=lambda stats: f"{stats['kurtosis']:.6g}"
+            if not math.isnan(stats["kurtosis"])
+            else "n/a",
+        ),
+        ColumnSpec(
+            "Median",
+            extractor=lambda stats: float(stats["median"]),
+            formatter=lambda stats: f"{stats['median']:.6g}",
+        ),
+        ColumnSpec(
+            "Q1",
+            extractor=lambda stats: float(stats["q1"]),
+            formatter=lambda stats: f"{stats['q1']:.6g}",
+            reverse=True,
+        ),
+        ColumnSpec(
+            "Q3",
+            extractor=lambda stats: float(stats["q3"]),
+            formatter=lambda stats: f"{stats['q3']:.6g}",
+        ),
+        ColumnSpec(
+            "|Mean|",
+            extractor=lambda stats: float(stats["abs_mean"]),
+            formatter=lambda stats: f"{stats['abs_mean']:.6g}",
+        ),
+        ColumnSpec(
+            "Zeros %",
+            extractor=lambda stats: None
+            if math.isnan(stats["zero_pct"])
+            else float(stats["zero_pct"]),
+            formatter=lambda stats: f"{stats['zero_pct']:.3g}%"
+            if not math.isnan(stats["zero_pct"])
+            else "n/a",
+        ),
+    ]
+
+    column_ranges = _compute_column_ranges(stats_rows, column_specs)
+
     table = Table(
         title="Parameter statistics",
         box=box.SIMPLE_HEAVY,
@@ -314,6 +494,7 @@ def render_table(rows: Iterable[Tuple[str, Dict[str, float]]], max_rows: int | N
     table.add_column("Max", justify="right")
     table.add_column("Mean", justify="right")
     table.add_column("Std", justify="right")
+    table.add_column("Kurtosis", justify="right")
     table.add_column("Median", justify="right")
     table.add_column("Q1", justify="right")
     table.add_column("Q3", justify="right")
@@ -322,19 +503,14 @@ def render_table(rows: Iterable[Tuple[str, Dict[str, float]]], max_rows: int | N
 
     count = 0
     for name, stats in display_rows:
+        formatted_cells = [
+            _format_with_color(spec, stats, column_ranges, colorize=colorize)
+            for spec in column_specs
+        ]
         table.add_row(
             name,
             str(stats["shape"]),
-            f"{stats['numel']:,}",
-            f"{stats['min']:.6g}",
-            f"{stats['max']:.6g}",
-            f"{stats['mean']:.6g}",
-            f"{stats['std']:.6g}",
-            f"{stats['median']:.6g}",
-            f"{stats['q1']:.6g}",
-            f"{stats['q3']:.6g}",
-            f"{stats['abs_mean']:.6g}",
-            f"{stats['zero_pct']:.3g}%" if not math.isnan(stats["zero_pct"]) else "n/a",
+            *formatted_cells,
         )
         count += 1
 
@@ -346,7 +522,12 @@ def render_table(rows: Iterable[Tuple[str, Dict[str, float]]], max_rows: int | N
         )
 
 
-def render_l2_table(rows: List[L2NormStats], max_rows: int | None) -> None:
+def render_l2_table(
+    rows: List[L2NormStats],
+    max_rows: int | None,
+    *,
+    colorize: bool,
+) -> None:
     if not rows:
         return
 
@@ -354,6 +535,42 @@ def render_l2_table(rows: List[L2NormStats], max_rows: int | None) -> None:
     total_rows = len(rows)
     display_rows = rows if max_rows is None else rows[:max_rows]
     has_histograms = any(row.histogram_path is not None for row in rows)
+
+    column_specs: List[ColumnSpec] = [
+        ColumnSpec(
+            "# Vectors",
+            extractor=lambda row: float(row.num_vectors),
+            formatter=lambda row: f"{row.num_vectors:,}",
+        ),
+        ColumnSpec(
+            "Min",
+            extractor=lambda row: float(row.min),
+            formatter=lambda row: f"{row.min:.6g}",
+            reverse=True,
+        ),
+        ColumnSpec(
+            "Max",
+            extractor=lambda row: float(row.max),
+            formatter=lambda row: f"{row.max:.6g}",
+        ),
+        ColumnSpec(
+            "Mean",
+            extractor=lambda row: float(row.mean),
+            formatter=lambda row: f"{row.mean:.6g}",
+        ),
+        ColumnSpec(
+            "Std",
+            extractor=lambda row: float(row.std),
+            formatter=lambda row: f"{row.std:.6g}",
+        ),
+        ColumnSpec(
+            "Kurtosis",
+            extractor=lambda row: None if math.isnan(row.kurtosis) else float(row.kurtosis),
+            formatter=lambda row: f"{row.kurtosis:.6g}" if not math.isnan(row.kurtosis) else "n/a",
+        ),
+    ]
+
+    column_ranges = _compute_column_ranges(rows, column_specs)
 
     table = Table(
         title="Directional L2 norm statistics",
@@ -374,16 +591,15 @@ def render_l2_table(rows: List[L2NormStats], max_rows: int | None) -> None:
         table.add_column("Histogram", overflow="fold")
 
     for row in display_rows:
+        formatted_cells = [
+            _format_with_color(spec, row, column_ranges, colorize=colorize)
+            for spec in column_specs
+        ]
         values = [
             row.parameter,
             str(row.tensor_shape),
             f"axis {row.axis} (vector dim={row.axis_size})",
-            f"{row.num_vectors:,}",
-            f"{row.min:.6g}",
-            f"{row.max:.6g}",
-            f"{row.mean:.6g}",
-            f"{row.std:.6g}",
-            f"{row.kurtosis:.6g}" if not math.isnan(row.kurtosis) else "n/a",
+            *formatted_cells,
         ]
         if has_histograms:
             values.append(str(row.histogram_path) if row.histogram_path else "—")
@@ -477,10 +693,10 @@ def main() -> None:
         return
 
     rows.sort(key=lambda item: item[0])
-    render_table(rows, args.max_rows)
+    render_table(rows, args.max_rows, colorize=args.colorize)
     render_summary(summary, matched=len(rows))
     if l2_rows:
-        render_l2_table(l2_rows, args.max_l2_rows)
+        render_l2_table(l2_rows, args.max_l2_rows, colorize=args.colorize)
 
 
 if __name__ == "__main__":
