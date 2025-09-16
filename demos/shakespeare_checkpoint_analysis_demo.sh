@@ -1,5 +1,5 @@
 #!/bin/bash
-# shakespeare_checkpoint_analysis_demo.sh
+# demos/shakespeare_checkpoint_analysis_demo.sh
 # Demonstrates training on the shakespeare_char dataset and exploring checkpoints.
 
 set -euo pipefail
@@ -43,19 +43,19 @@ if [[ ! -f "${CKPT_PATH}" ]]; then
   exit 1
 fi
 
-# # Use the interactive explorer to inspect embedding statistics.
-# echo "\nRunning checkpoint explorer to inspect transformer.wte.weight statistics..."
-# python3 analysis/checkpoint_analysis/checkpoint_explorer.py "${CKPT_PATH}" <<'EOINPUT'
-# 0
-# 0
-# 0
-# 4
+# Use the interactive explorer to inspect embedding statistics.
+echo "\nRunning checkpoint explorer to inspect transformer.wte.weight statistics..."
+python3 analysis/checkpoint_analysis/checkpoint_explorer.py "${CKPT_PATH}" <<'EOINPUT'
+0
+0
+0
+4
 
-# b
-# b
-# b
-# q
-# EOINPUT
+b
+b
+b
+q
+EOINPUT
 
 # Use the regex explorer to summarize attention projection weights and save histograms.
 echo "\nRunning checkpoint regex explorer for attention projection weights..."
