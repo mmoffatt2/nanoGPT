@@ -29,6 +29,7 @@ class L2NormStats:
     parameter: str
     axis: int
     axis_size: int
+    tensor_shape: Tuple[int, ...]
     num_vectors: int
     min: float
     max: float
@@ -194,6 +195,7 @@ def compute_l2_norm_stats(
         return []
 
     tensor = tensor.detach().to(torch.float32)
+    tensor_shape = tuple(tensor.shape)
     results: List[L2NormStats] = []
 
     for axis, axis_size in enumerate(tensor.shape):
@@ -226,6 +228,8 @@ def compute_l2_norm_stats(
                 histogram_dir,
                 name,
                 axis,
+                tensor_shape=tensor_shape,
+                axis_size=axis_size,
                 bins=histogram_bins,
             )
 
@@ -234,6 +238,7 @@ def compute_l2_norm_stats(
                 parameter=name,
                 axis=axis,
                 axis_size=axis_size,
+                tensor_shape=tensor_shape,
                 num_vectors=norms.numel(),
                 min=min_norm,
                 max=max_norm,
@@ -253,6 +258,8 @@ def save_l2_histogram(
     name: str,
     axis: int,
     *,
+    tensor_shape: Tuple[int, ...],
+    axis_size: int,
     bins: int,
 ) -> Path:
     try:
@@ -266,13 +273,21 @@ def save_l2_histogram(
         ) from exc
 
     histogram_dir.mkdir(parents=True, exist_ok=True)
+    shape_token = "x".join(str(dim) for dim in tensor_shape) or "scalar"
     sanitized_name = name.replace("/", "_").replace(".", "_")
-    file_name = f"{sanitized_name}_axis{axis}.png"
+    file_name = f"{sanitized_name}_shape{shape_token}_axis{axis}_dim{axis_size}.png"
     file_path = histogram_dir / file_name
 
     plt.figure(figsize=(8, 4))
     plt.hist(norms.cpu().numpy(), bins=bins, color="#4C72B0", edgecolor="black", alpha=0.8)
-    plt.title(f"L2 norm histogram for {name} (axis {axis})")
+    plt.title(
+        "\n".join(
+            [
+                f"L2 norm histogram for {name}",
+                f"shape={tensor_shape}, axis={axis}, vector dim={axis_size}",
+            ]
+        )
+    )
     plt.xlabel("L2 norm")
     plt.ylabel("Frequency")
     plt.tight_layout()
@@ -347,6 +362,7 @@ def render_l2_table(rows: List[L2NormStats], max_rows: int | None) -> None:
         show_lines=False,
     )
     table.add_column("Parameter", overflow="fold")
+    table.add_column("Shape", justify="center")
     table.add_column("Axis", justify="center")
     table.add_column("# Vectors", justify="right")
     table.add_column("Min", justify="right")
@@ -360,7 +376,8 @@ def render_l2_table(rows: List[L2NormStats], max_rows: int | None) -> None:
     for row in display_rows:
         values = [
             row.parameter,
-            f"dim {row.axis} (size={row.axis_size})",
+            str(row.tensor_shape),
+            f"axis {row.axis} (vector dim={row.axis_size})",
             f"{row.num_vectors:,}",
             f"{row.min:.6g}",
             f"{row.max:.6g}",
