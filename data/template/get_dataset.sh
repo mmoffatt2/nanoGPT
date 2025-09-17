@@ -25,6 +25,13 @@ url="INSERT_URL_WITH_FILES"
 #   --include_keys "instruction" "response" \
 #   --value_prefix $'#U:\n' $'#B:\n'
 #
+# uncomment and fill in if url has csv datasets
+# python3 ./utils/get_csv_dataset.py \
+#   --url "${url}" \
+#   --include_keys "instruction" "response" \
+#   --value_prefixes $'#U:\n' $'#B:\n' \
+#   --split_by_prefix
+#
 
 # uncomment for direct to json
 # python utils/get_parquet_to_json.py \
