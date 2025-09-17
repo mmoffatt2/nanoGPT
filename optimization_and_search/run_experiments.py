@@ -258,14 +258,23 @@ def main():
         configs_left = total - idx + 1
         if idx == 1:
             print(
-                f"[green]Starting config {idx}/{total} ({configs_left} configs left). Estimated time remaining: N/A[/]"
+                "[green]Starting config "
+                f"{idx}/{total} ({configs_left} configs left). "
+                "Estimated time remaining: N/A. Estimated completion: N/A[/]"
             )
         else:
-            elapsed = (datetime.now() - start_time).total_seconds()
+            now = datetime.now()
+            elapsed = (now - start_time).total_seconds()
             avg = elapsed / (idx - 1)
-            eta = timedelta(seconds=int(avg * configs_left))
+            eta_seconds = int(avg * configs_left)
+            eta = timedelta(seconds=eta_seconds)
+            finish_time = now + timedelta(seconds=eta_seconds)
+            finish_formatted = finish_time.strftime("%Y-%m-%d %H:%M:%S")
             print(
-                f"[green]Starting config {idx}/{total} ({configs_left} configs left). Estimated time remaining: {eta}[/]"
+                "[green]Starting config "
+                f"{idx}/{total} ({configs_left} configs left). "
+                f"Estimated time remaining: {eta}. "
+                f"Estimated completion: {finish_formatted}[/]"
             )
         run_experiment(combo, base, args)
 
