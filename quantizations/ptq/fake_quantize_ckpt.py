@@ -1,4 +1,5 @@
 import argparse
+import importlib.util
 import math
 import os
 import shutil
@@ -6,6 +7,18 @@ from collections.abc import MutableMapping
 from typing import Iterable, Tuple
 
 import torch
+
+
+_RICH_SPEC = importlib.util.find_spec("rich")
+if _RICH_SPEC:
+    from rich import box
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.table import Table
+
+    _RICH_CONSOLE = Console(highlight=False)
+else:
+    _RICH_CONSOLE = None
 
 
 def parse_args():
@@ -153,14 +166,133 @@ def estimate_checkpoint_sizes(state_dict, num_bits: int) -> Tuple[float, float]:
     return original_bytes, quantized_bytes
 
 
-def format_size(num_bytes: float) -> str:
+def _size_breakdown(num_bytes: float) -> Tuple[str, str, str, str]:
     kb = num_bytes / 1024.0
     mb = kb / 1024.0
     gb = mb / 1024.0
     return (
-        f"{num_bytes:,.0f} bytes "
-        f"({kb:,.2f} KB / {mb:,.2f} MB / {gb:,.4f} GB)"
+        f"{num_bytes:,.0f} bytes",
+        f"{kb:,.2f} KB",
+        f"{mb:,.2f} MB",
+        f"{gb:,.4f} GB",
     )
+
+
+def format_size(num_bytes: float) -> str:
+    base, kb, mb, gb = _size_breakdown(num_bytes)
+    return f"{base} ({kb} / {mb} / {gb})"
+
+
+def _format_size_rich(
+    num_bytes: float,
+    value_style: str = "white",
+    detail_style: str = "dim",
+) -> str:
+    base, kb, mb, gb = _size_breakdown(num_bytes)
+    return (
+        f"[{value_style}]{base}[/{value_style}]\n"
+        f"[{detail_style}]{kb} | {mb} | {gb}[/{detail_style}]"
+    )
+
+
+def print_quantization_summary(
+    scheme: str,
+    num_bits: int,
+    original_bytes: float,
+    quantized_bytes: float,
+) -> None:
+    if _RICH_CONSOLE:
+        scheme_label = f"{scheme} ({num_bits}-bit)"
+        table = Table(
+            title="Quantization Summary",
+            title_style="bold magenta",
+            show_header=False,
+            box=box.SIMPLE_HEAVY,
+            expand=True,
+        )
+        table.add_column("Metric", style="bold cyan", no_wrap=True)
+        table.add_column("Value", style="bright_white")
+        table.add_row("Scheme", f"[bold green]{scheme_label}[/bold green]")
+        table.add_row(
+            "Original Size",
+            _format_size_rich(original_bytes, value_style="bright_white"),
+        )
+        table.add_row(
+            "Quantized Size",
+            _format_size_rich(quantized_bytes, value_style="cyan"),
+        )
+
+        if original_bytes > 0:
+            if quantized_bytes > 0:
+                ratio = original_bytes / quantized_bytes
+                pct_of_original = (quantized_bytes / original_bytes) * 100.0
+                reduction_pct = 100.0 - pct_of_original
+                bytes_saved = max(original_bytes - quantized_bytes, 0.0)
+                table.add_row("Compression", f"[bold green]{ratio:.2f}x[/bold green]")
+                table.add_row(
+                    "Size Reduction",
+                    f"[green]{reduction_pct:.2f}%[/green]",
+                )
+                table.add_row(
+                    "Remaining Size",
+                    f"[yellow]{pct_of_original:.2f}%[/yellow] of original",
+                )
+                table.add_row(
+                    "Bytes Saved",
+                    _format_size_rich(bytes_saved, value_style="bright_green"),
+                )
+            else:
+                table.add_row(
+                    "Compression",
+                    "[bold green]∞[/bold green] ([green]100.00% size reduction[/green])",
+                )
+                table.add_row(
+                    "Remaining Size",
+                    "[yellow]0.00%[/yellow] of original",
+                )
+                bytes_saved = max(original_bytes - quantized_bytes, 0.0)
+                table.add_row(
+                    "Bytes Saved",
+                    _format_size_rich(bytes_saved, value_style="bright_green"),
+                )
+        else:
+            table.add_row("Compression", "[yellow]n/a[/yellow]")
+
+        panel = Panel.fit(
+            table,
+            title="[bold bright_white on blue] Fake PTQ [/bold bright_white on blue]",
+            border_style="bright_blue",
+            padding=(1, 2),
+        )
+        _RICH_CONSOLE.print(panel)
+        return
+
+    # Plain-text fallback when rich is unavailable.
+    print("Quantization summary:")
+    print(f"  Scheme: {scheme}, bits: {num_bits}")
+    print("  Estimated checkpoint size before quantization:")
+    print(f"    {format_size(original_bytes)}")
+    print("  Estimated checkpoint size after quantization:")
+    print(f"    {format_size(quantized_bytes)}")
+    if original_bytes > 0:
+        if quantized_bytes > 0:
+            ratio = original_bytes / quantized_bytes
+            pct_of_original = (quantized_bytes / original_bytes) * 100.0
+            reduction_pct = 100.0 - pct_of_original
+            bytes_saved = max(original_bytes - quantized_bytes, 0.0)
+            print(
+                "  Estimated compression factor:",
+                f" {ratio:.2f}x ({reduction_pct:.2f}% size reduction,",
+                f"{pct_of_original:.2f}% of original size)",
+            )
+            print(f"  Bytes saved: {format_size(bytes_saved)}")
+        else:
+            print("  Estimated compression factor: ∞ (100.00% size reduction)")
+            print("  Remaining size: 0.00% of original")
+            bytes_saved = max(original_bytes - quantized_bytes, 0.0)
+            print(f"  Bytes saved: {format_size(bytes_saved)}")
+    else:
+        print("  Estimated compression factor: n/a")
 
 def main():
     args = parse_args()
@@ -206,26 +338,20 @@ def main():
     if os.path.exists(meta_in):
         shutil.copy(meta_in, meta_out)
 
-    print("Quantization summary:")
-    print(f"  Scheme: {args.quantization}, bits: {args.num_bits}")
-    print("  Estimated checkpoint size before quantization:")
-    print(f"    {format_size(original_bytes)}")
-    print("  Estimated checkpoint size after quantization:")
-    print(f"    {format_size(quantized_bytes)}")
-    if original_bytes > 0:
-        if quantized_bytes > 0:
-            ratio = original_bytes / quantized_bytes
-            pct_of_original = (quantized_bytes / original_bytes) * 100.0
-            reduction_pct = 100.0 - pct_of_original
-            print(
-                "  Estimated compression factor:"
-                f" {ratio:.2f}x ({reduction_pct:.2f}% size reduction, "
-                f"{pct_of_original:.2f}% of original size)"
-            )
-        else:
-            print("  Estimated compression factor: ∞ (100.00% size reduction)")
+    print_quantization_summary(
+        args.quantization,
+        args.num_bits,
+        original_bytes,
+        quantized_bytes,
+    )
+
+    if _RICH_CONSOLE:
+        _RICH_CONSOLE.print(
+            f"[cyan]Saved quantized checkpoint to[/cyan] "
+            f"[bold]{os.path.abspath(out_dir)}[/bold]"
+        )
     else:
-        print("  Estimated compression factor: n/a")
+        print(f"Saved quantized checkpoint to {os.path.abspath(out_dir)}")
 
 if __name__ == "__main__":
     main()
