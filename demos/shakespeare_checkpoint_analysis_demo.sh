@@ -30,7 +30,7 @@ if [[ "$SKIP_TRAINING" = "no" ]]; then
     --no-use_abs_pos_embeddings \
     --block_size 64 \
     --batch_size 64 \
-    --n_layer 6 \
+    --n_layer 10 \
     --n_head 6 \
     --n_embd 384 \
     --eval_interval 100 \
@@ -62,16 +62,12 @@ echo "\nRunning checkpoint regex explorer for attention projection weights..."
 python3 analysis/checkpoint_analysis/checkpoint_regex_explorer.py \
   "${CKPT_PATH}" \
   "transformer\\.h\\.[0-9]+\\.attn\\.(c_attn_(q|k|v)|c_proj)\\.weight" \
-  --max-rows 8 \
-  --max-l2-rows 8 \
   --histogram-dir "${HIST_DIR}" \
   --histogram-bins 40
 
 python3 analysis/checkpoint_analysis/checkpoint_regex_explorer.py \
   "${CKPT_PATH}" \
   "transformer\\.h\\.[0-9]+\\.mlp\\.(c_fc|c_proj)\\.weight" \
-  --max-rows 8 \
-  --max-l2-rows 8 \
   --histogram-dir "${HIST_DIR}" \
   --histogram-bins 40
 
