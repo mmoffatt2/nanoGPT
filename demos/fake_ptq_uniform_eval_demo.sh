@@ -14,7 +14,7 @@ OUT_DIR="out_fake_ptq_shakespeare"
 SWEEP_ROOT="${OUT_DIR}_uniform_sweep"
 EVAL_ITERS=200
 BATCH_SIZE=64
-BLOCK_SIZE=128
+BLOCK_SIZE=256
 
 BIT_START=8
 BIT_STOP=3
@@ -87,16 +87,16 @@ if [ ! -f "$OUT_DIR/ckpt.pt" ]; then
   python3 train.py \
     --dataset shakespeare_char \
     --out_dir "$OUT_DIR" \
-    --n_layer 4 \
-    --n_head 4 \
-    --n_embd 256 \
+    --n_layer 6 \
+    --n_head 6 \
+    --n_embd 384 \
+    --use_rotary_embeddings \
+    --no-use_abs_pos_embeddings \
     --block_size "$BLOCK_SIZE" \
     --batch_size "$BATCH_SIZE" \
-    --max_iters 500 \
-    --lr_decay_iters 500 \
+    --max_iters 750 \
     --eval_iters "$EVAL_ITERS" \
-    --log_interval 10 \
-    --always_save_checkpoint
+    --compile
 else
   echo "Found existing checkpoint at $OUT_DIR/ckpt.pt; skipping training."
 fi
@@ -104,9 +104,7 @@ fi
 echo "=== Step 3: Evaluate the baseline (fp32) checkpoint ==="
 python3 sample.py \
   --out_dir "$OUT_DIR" \
-  --init_from resume \
   --eval_only \
-  --eval_iters "$EVAL_ITERS" \
   --eval_dataset shakespeare_char
 
 step=4
@@ -118,8 +116,7 @@ for bit in "${BITS[@]}"; do
   if [ ! -f "$QUANT_OUT_DIR/ckpt.pt" ]; then
     python3 quantizations/ptq/fake_quantize_ckpt.py "$OUT_DIR" \
       --out_dir "$QUANT_OUT_DIR" \
-      --num_bits "$bit" \
-      --quantization asymmetric
+      --num_bits "$bit"
   else
     echo "Found existing ${bit}-bit checkpoint at $QUANT_OUT_DIR/ckpt.pt; skipping quantization."
   fi
@@ -129,9 +126,7 @@ for bit in "${BITS[@]}"; do
   echo "=== Step ${step}: Evaluate the ${bit}-bit checkpoint ==="
   python3 sample.py \
     --out_dir "$QUANT_OUT_DIR" \
-    --init_from resume \
     --eval_only \
-    --eval_iters "$EVAL_ITERS" \
     --eval_dataset shakespeare_char
 
   step=$((step + 1))
