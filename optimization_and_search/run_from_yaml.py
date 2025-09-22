@@ -32,6 +32,30 @@ METRIC_KEYS = [
 ]
 
 
+def _parse_override_args(arg_list: list[str] | None) -> dict:
+    """Parse --override_args entries like ["batch_size=32", "learning_rate=0.001"].
+
+    Uses yaml.safe_load to infer types (int/float/bool/list/str).
+    Invalid items (without '=') are ignored with a warning.
+    """
+    if not arg_list:
+        return {}
+    overrides: dict = {}
+    for item in arg_list:
+        if "=" not in item:
+            print(f"[yellow]Ignoring malformed override (missing '='):[/] {item}")
+            continue
+        key, value = item.split("=", 1)
+        key = key.strip()
+        try:
+            # yaml.safe_load gives us nice typing for numbers, bools, lists, etc.
+            parsed_val = yaml.safe_load(value)
+        except Exception:
+            parsed_val = value  # fallback to raw string
+        overrides[key] = parsed_val
+    return overrides
+
+
 def format_run_name(combo: dict, base: str, prefix: str, row_index: Optional[int] = None) -> str:
     """Create a unique run name.
 
@@ -134,6 +158,11 @@ def run_experiment(
     # Build and run
     cmd = build_command(combo)
     print(f"Running: {' '.join(cmd)}")
+
+    # Dry run: only print command, do not execute or log
+    if getattr(args, "dry_run", False):
+        print("[cyan]Dry run enabled — skipping execution.[/]")
+        return
     
     # Set environment variables for memory management
     env = os.environ.copy()
@@ -165,6 +194,9 @@ def main(yaml_path, base, args):
         else:
             raise ValueError("YAML file should contain either a list of configs or a dict with 'configs' key")
         
+        # Parse user-provided overrides once; CLI should have highest precedence
+        cli_overrides = _parse_override_args(getattr(args, "override_args", None))
+
         for row_index, config in enumerate(configs):
             # Start with the config from YAML
             dynamic_cfg = config.copy()
@@ -183,6 +215,10 @@ def main(yaml_path, base, args):
             # Apply overrides (explicit local precedence)
             dynamic_cfg.update(overrides)
 
+            # Finally, apply CLI overrides with highest precedence
+            if cli_overrides:
+                dynamic_cfg.update(cli_overrides)
+
             # Run experiment
             run_experiment(dynamic_cfg, base, args, row_index=row_index)
 
@@ -192,6 +228,8 @@ if __name__ == "__main__":
     parser.add_argument("--output_dir", type=str, default="out", help="Base output directory")
     parser.add_argument("--use_timestamp", action="store_true", help="Use timestamp in output directory names")
     parser.add_argument("--prefix", type=str, default="sweep-", help="  Prefix for run names")
+    parser.add_argument("--override_args", type=str, nargs='*', help="Additional args to override YAML configs, e.g., --override_args batch_size=32 learning_rate=0.001")
+    parser.add_argument("--dry_run", action="store_true", help="If set, only print commands without executing")
     args, unknown = parser.parse_known_args()
 
     yaml_path = Path(args.yaml)
