@@ -19,5 +19,6 @@ out*/
 
 # experiment directories
 experiments/
+nsga_exps/
 
 venv/*
