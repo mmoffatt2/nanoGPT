@@ -17,4 +17,7 @@ exploration_logs/
 out*/
 .aider*
 
+# experiment directories
+experiments/
+
 venv/*
