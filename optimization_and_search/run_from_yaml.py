@@ -1,0 +1,199 @@
+import argparse
+from pathlib import Path
+import json
+import subprocess
+from pathlib import Path
+from datetime import datetime
+from itertools import product
+import argparse
+import os
+from typing import Optional
+
+import yaml
+from rich import print
+from rich.console import Console
+from rich.table import Table
+
+# Optional: import your run_experiment function from your main script
+# from your_main_script import run_experiment
+
+# Constants
+LOG_DIR = Path("exploration_logs")
+LOG_DIR.mkdir(exist_ok=True)
+METRICS_FILENAME = "best_val_loss_and_iter.txt"
+METRIC_KEYS = [
+    "best_val_loss",
+    "best_val_iter",
+    "num_params",
+    "better_than_chance",
+    "btc_per_param",
+    "peak_gpu_mb",
+    "iter_latency_avg",
+]
+
+
+def format_run_name(combo: dict, base: str, prefix: str, row_index: Optional[int] = None) -> str:
+    """Create a unique run name.
+
+    Preferred scheme (stable, short): <prefix><base>-row<row_index>
+    Fallback if row_index is None: concatenate parameter values (legacy behavior).
+    """
+    if row_index is not None:
+        return f"{prefix}{base}-row{row_index}"
+    parts = [str(v) for v in combo.values()]
+    return f"{prefix}{base}-{'-'.join(parts)}"
+
+
+def read_metrics(out_dir: str) -> dict:
+    """
+    Read best_val_loss_and_iter.txt and parse five metrics.
+
+    Returns:
+        Dict with keys: best_val_loss, best_val_iter, num_params,
+        better_than_chance, btc_per_param.
+    """
+    path = Path(out_dir) / METRICS_FILENAME
+    if not path.exists():
+        raise FileNotFoundError(f"Metrics file not found: {path}")
+    line = path.read_text().strip()
+    parts = [p.strip() for p in line.split(',')]
+
+    casts = [float, int, int, float, float, float, float]
+    return {k: typ(v) for k, typ, v in zip(METRIC_KEYS, casts, parts)}
+
+
+def completed_runs(log_file: Path) -> set[str]:
+    """
+    Return set of run names already logged in YAML file.
+    """
+    if not log_file.exists():
+        return set()
+    runs = set()
+    for doc in yaml.safe_load_all(log_file.open()):
+        if doc and 'formatted_name' in doc:
+            runs.add(doc['formatted_name'])
+    return runs
+
+
+def append_log(log_file: Path, name: str, combo: dict, metrics: dict) -> None:
+    """
+    Append a YAML entry with run details and metrics.
+    """
+    entry = {'formatted_name': name, 'config': combo, **metrics}
+    with log_file.open('a') as f:
+        yaml.safe_dump(entry, f, explicit_start=True)
+
+
+def build_command(combo: dict) -> list[str]:
+    """
+    Construct the command-line invocation for train.py.
+    """
+    cmd = ['python3', 'train.py', '--compile']
+    for k, v in combo.items():
+        if isinstance(v, bool):
+            cmd.append(f"--{'' if v else 'no-'}{k}")
+        elif isinstance(v, list):
+            # For list parameters, add each element as a separate argument
+            cmd.append(f"--{k}")
+            cmd.extend(str(x) for x in v)
+        else:
+            cmd += [f"--{k}", str(v)]
+    return cmd
+
+
+def run_experiment(
+    combo: dict,
+    base: str,
+    args: argparse.Namespace,
+    row_index: Optional[int] = None,
+) -> None:
+    """
+    Execute one experiment combo: skip if done, run train.py, record metrics.
+    """
+    run_name = format_run_name(combo, base, args.prefix, row_index=row_index) 
+    log_file = LOG_DIR / f"{base}.yaml"
+    if run_name in completed_runs(log_file):
+        print(f"[yellow]Skipping already-run:[/] {run_name}")
+        return
+
+    # Prepare output directory
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S') if args.use_timestamp else None
+    out_dir_name = f"{timestamp}_{run_name}" if timestamp else run_name
+    combo['out_dir'] = os.path.join(args.output_dir, out_dir_name)
+
+    # Prepare tensorboard run name
+    combo['tensorboard_run_name'] = run_name
+
+    # Show parameters
+    console = Console()
+    table = Table("Parameters", show_header=False)
+    for k, v in combo.items():
+        table.add_row(k, str(v))
+    console.print(table)
+
+    # Build and run
+    cmd = build_command(combo)
+    print(f"Running: {' '.join(cmd)}")
+    
+    # Set environment variables for memory management
+    env = os.environ.copy()
+    env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+    
+    try:
+        subprocess.run(cmd, check=True, env=env)
+    except subprocess.CalledProcessError:
+        print(f"[red]Process exited with error for run:[/] {run_name}")
+
+    # Read metrics (use existing or nan on failure)
+    try:
+        metrics = read_metrics(str(combo['out_dir']))
+    except Exception:
+        metrics = {k: float("nan") for k in METRIC_KEYS}
+
+    append_log(log_file, run_name, combo, metrics)
+
+def main(yaml_path, base, args):
+    with open(yaml_path, "r") as f:
+        # Load YAML data - expect a list of configuration dictionaries
+        yaml_data = yaml.safe_load(f)
+        
+        # Handle different YAML structures
+        if isinstance(yaml_data, list):
+            configs = yaml_data
+        elif isinstance(yaml_data, dict) and 'configs' in yaml_data:
+            configs = yaml_data['configs']
+        else:
+            raise ValueError("YAML file should contain either a list of configs or a dict with 'configs' key")
+        
+        for row_index, config in enumerate(configs):
+            # Start with the config from YAML
+            dynamic_cfg = config.copy()
+
+            # Ensure required training runtime parameters are set/overridden locally.
+            overrides = {
+                "batch_size": 64,  # Reduced from 128 to save memory
+                "device": "cuda",
+                "dataset": "minipile",
+                "max_iters": 10000,
+                "eval_iters": 50,  # Reduced from default to save memory
+                "gradient_accumulation_steps": 2,  # Compensate for smaller batch with grad accumulation
+                # "compute_model_stats": False,  # Disable model stats to save memory
+                "dtype": "bfloat16",  # Use bfloat16 to save memory vs float16
+            }
+            # Apply overrides (explicit local precedence)
+            dynamic_cfg.update(overrides)
+
+            # Run experiment
+            run_experiment(dynamic_cfg, base, args, row_index=row_index)
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--yaml", type=str, required=True, help="Path to YAML file with configs")
+    parser.add_argument("--output_dir", type=str, default="out", help="Base output directory")
+    parser.add_argument("--use_timestamp", action="store_true", help="Use timestamp in output directory names")
+    parser.add_argument("--prefix", type=str, default="sweep-", help="  Prefix for run names")
+    args, unknown = parser.parse_known_args()
+
+    yaml_path = Path(args.yaml)
+    main(yaml_path, args.output_dir, args)
+
