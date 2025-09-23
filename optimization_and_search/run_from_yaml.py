@@ -7,6 +7,7 @@ from datetime import datetime
 from itertools import product
 import argparse
 import os
+import sys
 from typing import Optional
 
 import yaml
@@ -18,8 +19,8 @@ from rich.table import Table
 # from your_main_script import run_experiment
 
 # Constants
-LOG_DIR = Path("exploration_logs")
-LOG_DIR.mkdir(exist_ok=True)
+# LOG_DIR = Path("exploration_logs")
+# LOG_DIR.mkdir(exist_ok=True)
 METRICS_FILENAME = "best_val_loss_and_iter.txt"
 METRIC_KEYS = [
     "best_val_loss",
@@ -56,16 +57,13 @@ def _parse_override_args(arg_list: list[str] | None) -> dict:
     return overrides
 
 
-def format_run_name(combo: dict, base: str, prefix: str, row_index: Optional[int] = None) -> str:
+def format_run_name(combo: dict, base: str, prefix: str, row_index: int) -> str:
     """Create a unique run name.
 
-    Preferred scheme (stable, short): <prefix><base>-row<row_index>
+    Preferred scheme (stable, short): <base><prefix>-row<row_index>
     Fallback if row_index is None: concatenate parameter values (legacy behavior).
     """
-    if row_index is not None:
-        return f"{prefix}{base}-row{row_index}"
-    parts = [str(v) for v in combo.values()]
-    return f"{prefix}{base}-{'-'.join(parts)}"
+    return f"{prefix}-row{row_index}"
 
 
 def read_metrics(out_dir: str) -> dict:
@@ -130,15 +128,21 @@ def run_experiment(
     base: str,
     args: argparse.Namespace,
     row_index: Optional[int] = None,
-) -> None:
+) -> bool:
     """
     Execute one experiment combo: skip if done, run train.py, record metrics.
+
+    Returns:
+        True if the subprocess completed successfully (or was skipped/dry-run),
+        False if the subprocess returned a non-zero exit code.
     """
     run_name = format_run_name(combo, base, args.prefix, row_index=row_index) 
+    LOG_DIR = base_path = Path(args.output_dir)
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f"{base}.yaml"
     if run_name in completed_runs(log_file):
         print(f"[yellow]Skipping already-run:[/] {run_name}")
-        return
+        return True
 
     # Prepare output directory
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S') if args.use_timestamp else None
@@ -162,7 +166,7 @@ def run_experiment(
     # Dry run: only print command, do not execute or log
     if getattr(args, "dry_run", False):
         print("[cyan]Dry run enabled — skipping execution.[/]")
-        return
+        return True
     
     # Set environment variables for memory management
     env = os.environ.copy()
@@ -170,8 +174,10 @@ def run_experiment(
     
     try:
         subprocess.run(cmd, check=True, env=env)
+        proc_ok = True
     except subprocess.CalledProcessError:
         print(f"[red]Process exited with error for run:[/] {run_name}")
+        proc_ok = False
 
     # Read metrics (use existing or nan on failure)
     try:
@@ -179,9 +185,10 @@ def run_experiment(
     except Exception:
         metrics = {k: float("nan") for k in METRIC_KEYS}
 
-    append_log(log_file, run_name, combo, metrics)
+    print(f"[green]Experiment completed for:[/] {run_name}")
+    return proc_ok
 
-def main(yaml_path, base, args):
+def main(yaml_path, base, args) -> int:
     with open(yaml_path, "r") as f:
         # Load YAML data - expect a list of configuration dictionaries
         yaml_data = yaml.safe_load(f)
@@ -197,7 +204,8 @@ def main(yaml_path, base, args):
         # Parse user-provided overrides once; CLI should have highest precedence
         cli_overrides = _parse_override_args(getattr(args, "override_args", None))
 
-        for row_index, config in enumerate(configs):
+    any_failed = False
+    for row_index, config in enumerate(configs):
             # Start with the config from YAML
             dynamic_cfg = config.copy()
 
@@ -220,18 +228,28 @@ def main(yaml_path, base, args):
                 dynamic_cfg.update(cli_overrides)
 
             # Run experiment
-            run_experiment(dynamic_cfg, base, args, row_index=row_index)
+            ok = run_experiment(dynamic_cfg, base, args, row_index=row_index)
+            if not ok:
+                any_failed = True
+
+    return 1 if any_failed else 0
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--yaml", type=str, required=True, help="Path to YAML file with configs")
     parser.add_argument("--output_dir", type=str, default="out", help="Base output directory")
     parser.add_argument("--use_timestamp", action="store_true", help="Use timestamp in output directory names")
-    parser.add_argument("--prefix", type=str, default="sweep-", help="  Prefix for run names")
+    parser.add_argument("--prefix", type=str, default="train", help="Prefix for run names")
     parser.add_argument("--override_args", type=str, nargs='*', help="Additional args to override YAML configs, e.g., --override_args batch_size=32 learning_rate=0.001")
     parser.add_argument("--dry_run", action="store_true", help="If set, only print commands without executing")
     args, unknown = parser.parse_known_args()
 
     yaml_path = Path(args.yaml)
-    main(yaml_path, args.output_dir, args)
+    exit_code = 0
+    try:
+        exit_code = int(main(yaml_path, args.output_dir, args))
+    except Exception as e:
+        print(f"[red]Fatal error:[/] {e}")
+        exit_code = 2
+    sys.exit(exit_code)
 
