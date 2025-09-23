@@ -140,6 +140,7 @@ def run_experiment(
     LOG_DIR = base_path = Path(args.output_dir)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = LOG_DIR / f"{base}.yaml"
+    print(f"writing to log file: {log_file}")
     if run_name in completed_runs(log_file):
         print(f"[yellow]Skipping already-run:[/] {run_name}")
         return True
@@ -184,6 +185,8 @@ def run_experiment(
         metrics = read_metrics(str(combo['out_dir']))
     except Exception:
         metrics = {k: float("nan") for k in METRIC_KEYS}
+
+    append_log(log_file, run_name, combo, metrics)
 
     print(f"[green]Experiment completed for:[/] {run_name}")
     return proc_ok
