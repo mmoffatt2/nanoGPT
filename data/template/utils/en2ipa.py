@@ -1,8 +1,12 @@
+# data/template/utils/en2ipa.py
+
 import subprocess
 from konlpy.tag import Okt
 import argparse
 import re
 import json
+from typing import List
+from rich.progress import Progress, BarColumn, TextColumn, TimeRemainingColumn, TimeElapsedColumn, MofNCompleteColumn
 
 counter = 0
 
@@ -14,15 +18,9 @@ def transcribe_english(sentence, wrapper=False):
             capture_output=True,
             text=True
         )
-
-        # Remove unwanted characters
-        transcription = result.stdout.strip().replace("ㆍ"," ")
-        # Check for failed transcription markers
+        transcription = result.stdout.strip().replace("ㆍ", " ")
         if "(en)" in transcription:
-            if wrapper:
-                return "[[[[[" + sentence + "]]]]]"# Return original sentence on failure
-            else:
-                return sentence
+            return f"[[[[[{sentence}]]]]]" if wrapper else sentence
         return transcription
     except Exception as e:
         return f"Error in transcribing English: {str(e)}"
@@ -30,49 +28,52 @@ def transcribe_english(sentence, wrapper=False):
 def handle_mixed_language(word, wrapper=False):
     """Handle a word with potential English, Language, or number content."""
     global counter
-    if word.isdigit():  # Detect numbers but just pass through for now (different in each language)
+    if word.isdigit():
         return word
-    elif any('a' <= char.lower() <= 'z' for char in word):  # Detect English
+    elif any('a' <= char.lower() <= 'z' for char in word):
         return transcribe_english(word, wrapper=wrapper)
-    else:  # Non-English Word
+    else:
         if wrapper:
             return "[[[[[" + word + "]]]]]"
         else:
             counter += 1
             return word
 
+_WORD_RE = re.compile(r'\w+|[^\w\s]', re.UNICODE)
+
+def transcribe_tokens_to_string(tokens: List[str], wrapper: bool) -> str:
+    result = []
+    for tok in tokens:
+        if re.match(r'\w+', tok):
+            result.append(handle_mixed_language(tok, wrapper=wrapper))
+        else:
+            result.append(tok)
+    return " ".join(result)
+
 def transcribe_multilingual(sentences, input_json_key=None, output_json_key='ipa', wrapper=False):
-    """
-    Transcribe multilingual sentences and update JSON data directly.
-
-    Args:
-        sentences: JSON string or a loaded JSON object.
-        input_json_key: Key to extract sentences from in a JSON.
-        output_json_key: Key to store IPA transcription in the JSON (default: 'ipa').
-
-    Returns:
-        The modified JSON string with IPA transcriptions added.
-    """
+    """Transcribe multilingual sentences (JSON list mode)."""
     try:
         data = json.loads(sentences) if isinstance(sentences, str) else sentences
         if not isinstance(data, list):
             raise ValueError("JSON data should be a list of objects.")
 
-        for item in data:
-            if input_json_key in item:
-                sentence = item[input_json_key]
-                result = []
-                words = re.findall(r'\w+|[^\w\s]', sentence, re.UNICODE)
-                for word in words:
-                    if re.match(r'\w+', word):
-                        result.append(handle_mixed_language(word, wrapper=wrapper))
-                    else:
-                        result.append(word)
-                transcription_result = " ".join(result)
-                item[output_json_key] = transcription_result  # Update directly
-                print(transcription_result)
-            else:
-                print(f"Warning: Key '{input_json_key}' not found in item: {item}")
+        with Progress(
+            TextColumn("[bold blue]{task.description}"),
+            BarColumn(),
+            MofNCompleteColumn(),
+            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+            TimeElapsedColumn(),
+            TimeRemainingColumn(),
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Processing JSON items", total=len(data))
+            for item in data:
+                if input_json_key in item:
+                    sentence = item[input_json_key]
+                    tokens = _WORD_RE.findall(sentence)
+                    transcription_result = transcribe_tokens_to_string(tokens, wrapper=wrapper)
+                    item[output_json_key] = transcription_result
+                progress.update(task, advance=1)
 
     except (json.JSONDecodeError, ValueError) as e:
         print(f"Error: {e}")
@@ -80,36 +81,72 @@ def transcribe_multilingual(sentences, input_json_key=None, output_json_key='ipa
 
     return json.dumps(data, ensure_ascii=False, indent=4)
 
-def main():
-    parser = argparse.ArgumentParser(description='Transcribe multilingual sentences into IPA phonemes and update JSON data.')
-    parser.add_argument('input_file', type=str, help='Path to the input JSON file.')
-    parser.add_argument('--input_json_key', type=str, required=True, help='The key of the Korean text to convert to IPA in the JSON file.')
-    parser.add_argument('--output_json_key', type=str, default='ipa', help='The key to store the IPA transcription in the JSON file (default: "ipa").')
-    parser.add_argument("--wrapper",  type=bool, default=False, action=argparse.BooleanOptionalAction, help="option to wrap unparseable text with [[[[[square brackets]]]]], for later recovery")
+def transcribe_text_lines(lines: List[str], wrapper: bool) -> List[str]:
+    """Transcribe a plain-text file line-by-line."""
+    out_lines = []
+    with Progress(
+        TextColumn("[bold green]{task.description}"),
+        BarColumn(),
+        MofNCompleteColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeElapsedColumn(),
+        TimeRemainingColumn(),
+        transient=False,
+    ) as progress:
+        task = progress.add_task("Processing text lines", total=len(lines))
+        for line in lines:
+            raw = line.rstrip("\n")
+            tokens = _WORD_RE.findall(raw)
+            transcribed = transcribe_tokens_to_string(tokens, wrapper=wrapper)
+            out_lines.append(transcribed)
+            progress.update(task, advance=1)
+    return out_lines
 
+def main():
+    parser = argparse.ArgumentParser(
+        description='Transcribe multilingual content into IPA phonemes. Supports JSON list mode and plain-text line mode.'
+    )
+    parser.add_argument('input_file', type=str, help='Path to the input file (JSON list or plain text).')
+    parser.add_argument('--mode', choices=['json', 'text'], default='json',
+                        help='Processing mode. "json" expects a JSON list; "text" treats file as plain text.')
+    parser.add_argument('--input_json_key', type=str, help='JSON key to read sentences from (required for --mode json).')
+    parser.add_argument('--output_json_key', type=str, default='ipa', help='JSON key to store IPA (default: "ipa").')
+    parser.add_argument('--output_file', type=str, default=None,
+                        help='Output file path for text mode. Defaults to overwriting input.')
+    parser.add_argument("--wrapper", type=bool, default=False, action=argparse.BooleanOptionalAction,
+                        help="Wrap unparseable non-English text with [[[[[...]]]]] for later recovery.")
     args = parser.parse_args()
 
     try:
-        with open(args.input_file, 'r', encoding='utf-8') as f:
-            input_content = f.read()
-
-        # Transcribe and get the updated JSON data
-        updated_json_data = transcribe_multilingual(
-            input_content,
-            args.input_json_key,
-            args.output_json_key,
-            wrapper=args.wrapper
-        )
-
-        # Overwrite the original file with the updated JSON
-        if updated_json_data:
-            with open(args.input_file, 'w', encoding='utf-8') as f:
-                f.write(updated_json_data)
-            print(f"Successfully updated JSON data in '{args.input_file}'")
-
-        print(f"Total unparseable words: {counter}")
+        if args.mode == 'json':
+            if not args.input_json_key:
+                raise ValueError("--input_json_key is required when --mode json")
+            with open(args.input_file, 'r', encoding='utf-8') as f:
+                input_content = f.read()
+            updated_json_data = transcribe_multilingual(
+                input_content,
+                args.input_json_key,
+                args.output_json_key,
+                wrapper=args.wrapper
+            )
+            if updated_json_data:
+                with open(args.input_file, 'w', encoding='utf-8') as f:
+                    f.write(updated_json_data)
+                print(f"✅ Successfully updated JSON data in '{args.input_file}'")
+        else:
+            with open(args.input_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+            out_lines = transcribe_text_lines(lines, wrapper=args.wrapper)
+            target_path = args.output_file if args.output_file else args.input_file
+            with open(target_path, 'w', encoding='utf-8') as f:
+                f.write("\n".join(out_lines) + ("\n" if out_lines else ""))
+            print(f"✅ Successfully wrote transcribed text to '{target_path}'")
+        print(f"📊 Stats: {counter} unparseable words")
     except FileNotFoundError:
         print(f"Error: Input file '{args.input_file}' not found.")
+    except ValueError as ve:
+        print(f"Error: {ve}")
 
 if __name__ == '__main__':
     main()
+
