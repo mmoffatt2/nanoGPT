@@ -1,6 +1,7 @@
 import argparse
 import csv
 import os
+import sys
 import re
 from typing import Dict, Iterable, Iterator, List, Optional, Set, TextIO
 
@@ -450,6 +451,24 @@ if __name__ == "__main__":
         help="Replace newline characters within values with the provided text instead of keeping them.",
     )
     args = parser.parse_args()
+
+    # Increase CSV field size limit to handle very large cells (e.g., whole poems)
+    # Some platforms (notably 32-bit) can raise OverflowError for sys.maxsize.
+    # We fall back by shrinking until it’s accepted.
+    def _set_max_csv_field_limit():
+        max_try = sys.maxsize
+        while True:
+            try:
+                csv.field_size_limit(max_try)
+                break
+            except OverflowError:
+                # Reduce by factor 10 and try again
+                max_try = int(max_try / 10)
+                if max_try < 10_000_000:  # ~10MB minimum safety net
+                    csv.field_size_limit(10_000_000)
+                    break
+
+    _set_max_csv_field_limit()
 
     if args.split_multiline_values and args.newline_replacement is not None:
         raise ValueError(
