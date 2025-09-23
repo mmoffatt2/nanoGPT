@@ -518,6 +518,7 @@ def parse_args():
     # MLP Variations
     mlp_variants = [
             "mlp",
+            "edgellm_asic",
             "kan",
             "swiglu",
             "dual_path",
