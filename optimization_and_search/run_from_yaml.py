@@ -24,12 +24,9 @@ from rich.table import Table
 METRICS_FILENAME = "best_val_loss_and_iter.txt"
 METRIC_KEYS = [
     "best_val_loss",
-    "best_val_iter",
+    "best_val_iter", 
+    "best_tokens",
     "num_params",
-    "better_than_chance",
-    "btc_per_param",
-    "peak_gpu_mb",
-    "iter_latency_avg",
 ]
 
 
@@ -68,11 +65,10 @@ def format_run_name(combo: dict, base: str, prefix: str, row_index: int) -> str:
 
 def read_metrics(out_dir: str) -> dict:
     """
-    Read best_val_loss_and_iter.txt and parse five metrics.
+    Read best_val_loss_and_iter.txt and parse the first four metrics.
 
     Returns:
-        Dict with keys: best_val_loss, best_val_iter, num_params,
-        better_than_chance, btc_per_param.
+        Dict with keys: best_val_loss, best_val_iter, best_tokens, num_params.
     """
     path = Path(out_dir) / METRICS_FILENAME
     if not path.exists():
@@ -80,8 +76,12 @@ def read_metrics(out_dir: str) -> dict:
     line = path.read_text().strip()
     parts = [p.strip() for p in line.split(',')]
 
-    casts = [float, int, int, float, float, float, float]
-    return {k: typ(v) for k, typ, v in zip(METRIC_KEYS, casts, parts)}
+    # Take only the first 4 values and cast them appropriately
+    if len(parts) < len(METRIC_KEYS):
+        raise ValueError(f"Expected at least {len(METRIC_KEYS)} metrics, got {len(parts)}")
+    
+    casts = [float, int, int, int]
+    return {k: typ(v) for k, typ, v in zip(METRIC_KEYS, casts, parts[:len(METRIC_KEYS)])}
 
 
 def completed_runs(log_file: Path) -> set[str]:
@@ -112,6 +112,8 @@ def build_command(combo: dict) -> list[str]:
     """
     cmd = ['python3', 'train.py', '--compile']
     for k, v in combo.items():
+        if k == 'idx':  # skip the 'idx' parameter
+            continue
         if isinstance(v, bool):
             cmd.append(f"--{'' if v else 'no-'}{k}")
         elif isinstance(v, list):
