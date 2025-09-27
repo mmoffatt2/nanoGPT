@@ -34,4 +34,8 @@ alias dh="df -h ."
 alias wg="watch --color 'gpustat  --color'"
 alias wd="watch --color 'df -h .'"
 
+alias gf="git fetch --all"
+alias gs="git status"
+alias gl="git log --stat -p"
+
 alias c="clear"
