@@ -40,6 +40,9 @@ bash ./05-setup-tectonic.sh
 log "Step 6: Setting up Neovim..."
 bash ./06-setup-neovim.sh
 
+log "Step 7: Setting up bash_aliases..."
+bash ./07-setup-bash-aliases.sh
+
 echo ""
 log "✅ All setup scripts executed successfully!"
 log "Please log out and log back in for all changes to take effect."
