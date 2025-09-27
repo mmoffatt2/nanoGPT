@@ -3,6 +3,10 @@
 # Exit immediately if a command exits with a non-zero status.
 set -e
 
+echo "Note, these scripts can override local dotfiles, and are intended for use
+with newly instantiated VMs, and not tested for existing setups."
+echo "Press ctrl-c or equivalent to quit now, or press enter to begin setup."
+#
 # --- Helper Function for Logging ---
 log() {
   # ANSI color codes
