@@ -2,7 +2,7 @@
 
 Minimal utilities for multi-objective hyperparameter/architecture search using NSGA-II within Evo_GPT.
 
-Files
+## Files
 
 - **nsga2.py**: core NSGA-II algorithm and operators
 - **search_space.py**: search space and variation (mutation/crossover)
