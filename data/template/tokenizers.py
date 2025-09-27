@@ -6,6 +6,9 @@ import sentencepiece as spm
 import tiktoken
 from tqdm import tqdm
 from collections import defaultdict
+import json
+import math
+import numpy as np
 
 
 class Tokenizer:
@@ -40,56 +43,6 @@ class Tokenizer:
                 meta = pickle.load(f)
                 return meta.get(keyname)
         return None
-
-
-class NumericRangeTokenizer(Tokenizer):
-    def __init__(self, args):
-        super().__init__(args)
-        self.min_token = args.min_token
-        self.max_token = args.max_token
-        self.stoi = None
-        self.itos = None
-
-    def tokenize(self, data):
-        tokens = []
-        encountered_tokens = set()
-        lines = data.strip().split('\n')
-        for line in tqdm(lines, desc="Tokenizing Numeric Range"):
-            try:
-                num = int(line)
-                if self.min_token <= num <= self.max_token:
-                    tokens.append(num)
-                    encountered_tokens.add(num)
-                else:
-                    print(f"Warning: Number {num} is outside the specified range and will be skipped.")
-            except ValueError:
-                print(f"Warning: Invalid number '{line}' will be skipped.")
-
-        all_tokens = list(range(self.max_token, -1, -1))
-        self.stoi = {str(num): i for i, num in enumerate(all_tokens)}
-        self.itos = {i: str(num) for i, num in enumerate(all_tokens)}
-
-        indexed_tokens = []
-        for token in tokens:
-            idx = self.stoi[str(token)]
-            self.record_token(idx)
-            indexed_tokens.append(idx)
-
-        meta = {
-            "vocab_size": len(self.stoi),
-            "tokenizer": "numeric_range",
-            "min_token": self.min_token,
-            "max_token": self.max_token,
-            "stoi": self.stoi,
-            "itos": self.itos,
-            "encountered_tokens": sorted(encountered_tokens, reverse=True)
-        }
-        self.finalize_meta(meta)
-        return indexed_tokens
-
-    def detokenize(self, ids):
-        return '\n'.join([self.itos[id] for id in ids])
-
 
 class SentencePieceTokenizer(Tokenizer):
     def __init__(self, args, input_files=None):
@@ -168,23 +121,99 @@ class TiktokenTokenizer(Tokenizer):
     def __init__(self, args):
         super().__init__(args)
         self.tiktoken_encoding = args.tiktoken_encoding
-        self.enc = tiktoken.get_encoding(self.tiktoken_encoding)
-        self.vocab_size = self.enc.n_vocab
+
+        # Load additional tokens if provided
+        self.additional_tokens = {}
+        if hasattr(args, 'additional_tokens_file') and args.additional_tokens_file:
+            with open(args.additional_tokens_file, 'r') as f:
+                self.additional_tokens = json.load(f)
+
+        # Get base encoding
+        base_enc = tiktoken.get_encoding(self.tiktoken_encoding)
+
+        if self.additional_tokens:
+            # Create custom encoding with additional tokens
+            self.enc = tiktoken.Encoding(
+                name=f"{self.tiktoken_encoding}_custom",
+                pat_str=base_enc._pat_str,
+                mergeable_ranks=base_enc._mergeable_ranks,
+                special_tokens={**base_enc._special_tokens,
+                                **self.additional_tokens},
+                disallowed_special=(),
+            )
+            self.special_tokens = self.additional_tokens
+        else:
+            self.enc = base_enc
+            self.special_tokens = {}
 
     def tokenize(self, data):
-        ids = self.enc.encode_ordinary(data)
-        for token_id in ids:
-            self.record_token(token_id)
+        """Tokenize the input data using tiktoken with support for special tokens."""
+        token_ids = []
+        current_pos = 0
+        data_len = len(data)
+
+        while current_pos < data_len:
+            # Try to match special tokens first
+            matched_special = False
+            for token, token_id in self.special_tokens.items():
+                if data.startswith(token, current_pos):
+                    token_ids.append(token_id)
+                    self.record_token(token_id)
+                    current_pos += len(token)
+                    matched_special = True
+                    break
+
+            if not matched_special:
+                # Find the next special token or end of text
+                next_special = data_len
+                for token in self.special_tokens:
+                    pos = data.find(token, current_pos)
+                    if pos != -1 and pos < next_special:
+                        next_special = pos
+
+                # Take the chunk up to the next special token and let tiktoken handle it
+                chunk = data[current_pos:next_special]
+                if chunk:
+                    # Use encode() for proper subword tokenization
+                    chunk_ids = self.enc.encode(
+                            chunk,
+                            allowed_special=set(),
+                            disallowed_special=(),
+                            )
+                    token_ids.extend(chunk_ids)
+                    for token_id in chunk_ids:
+                        self.record_token(token_id)
+                current_pos = next_special
+
+        # Save metadata
         meta = {
-            "vocab_size": self.vocab_size,
+            "vocab_size": self.enc.n_vocab,
             "tokenizer": "tiktoken",
             "tiktoken_encoding": self.tiktoken_encoding,
+            "has_additional_tokens": bool(self.additional_tokens),
+            "special_tokens": self.special_tokens,
+            "itos": {i: self.enc.decode([i]) for i in set(token_ids)}
         }
         self.finalize_meta(meta)
-        return ids
+        return token_ids
 
-    def detokenize(self, ids):
-        return self.enc.decode(ids)
+    def detokenize(self, token_ids):
+        """Detokenize the token IDs back to text."""
+        result = []
+        for token_id in token_ids:
+            # Check if it's a special token
+            found = False
+            for token, special_id in self.special_tokens.items():
+                if token_id == special_id:
+                    result.append(token)
+                    found = True
+                    break
+
+            if not found:
+                # Regular token
+                result.append(self.enc.decode([token_id]))
+
+        return ''.join(result)
 
 
 class CustomTokenizer(Tokenizer):
@@ -228,6 +257,27 @@ class CustomTokenizer(Tokenizer):
 
     def detokenize(self, ids):
         return ''.join([self.itos[id] for id in ids])
+
+class ByteTokenizer(Tokenizer):
+    def __init__(self, args):
+        super().__init__(args)
+
+    def tokenize(self, data):
+        data_bytes = data.encode('utf-8')
+        ids = list(data_bytes)
+        for token_id in ids:
+            self.record_token(token_id)
+        meta = {
+            "vocab_size": 256,
+            "tokenizer": "byte",
+            "itos": {i: bytes([i]) for i in range(256)},
+        }
+        self.finalize_meta(meta)
+        return ids
+
+    def detokenize(self, ids):
+        return bytes(ids).decode('utf-8', errors='replace')
+
 
 class CharTokenizer(Tokenizer):
     def __init__(self, args, train_data, val_data):
@@ -391,4 +441,165 @@ class CustomCharTokenizerWithByteFallback(Tokenizer):
             out_pieces.append(all_bytes.decode('utf-8', errors='replace'))
 
         return ''.join(out_pieces)
+
+class JsonByteTokenizerWithByteFallback(Tokenizer):
+    """
+    Similar to CustomCharTokenizerWithByteFallback, but loads tokens from a JSON array.
+    IDs 0..255 are reserved for raw bytes, then custom tokens get IDs from 256 upwards.
+
+    During tokenization:
+      1) Convert text to UTF-8 bytes.
+      2) For each position in the byte sequence, attempt to match
+         a custom token's UTF-8 pattern. If we match, produce that token ID.
+         Otherwise, produce the ID for the single byte.
+
+    Detokenization:
+      - If ID < 256, it's a single raw byte.
+      - If ID >= 256, it's the custom token string.
+    """
+
+    def __init__(self, args):
+        super().__init__(args)
+        if args.json_tokens_file is None:
+            raise ValueError("JSON tokens file must be provided for this tokenizer.")
+
+        # Load custom tokens from JSON file
+        with open(args.json_tokens_file, "r", encoding="utf-8") as f:
+            self.custom_tokens = json.load(f)
+            if not isinstance(self.custom_tokens, list):
+                raise ValueError("JSON file must contain an array of tokens")
+
+        # Build vocab dictionaries (bytes first, then custom tokens)
+        self.build_vocab()
+
+    def build_vocab(self):
+        # Assign IDs 0..255 to individual bytes
+        self.stoi = {}
+        self.itos = {}
+
+        for b in range(256):
+            # Store key as the actual single byte
+            key = bytes([b])
+            self.stoi[key] = b  # ID = b
+            self.itos[b] = key
+
+        # Now assign IDs to the custom tokens from 256 onwards
+        offset = 256
+        self.custom_token_bytes = {}
+        for i, token_str in enumerate(self.custom_tokens):
+            token_id = offset + i
+            self.stoi[token_str] = token_id
+            self.itos[token_id] = token_str
+            self.custom_token_bytes[token_str] = token_str.encode('utf-8')
+
+        self.custom_token_count = len(self.custom_tokens)
+        self.vocab_size = 256 + self.custom_token_count
+
+    def tokenize(self, data):
+        # Convert entire string to UTF-8 bytes
+        data_bytes = data.encode('utf-8')
+        i = 0
+        n = len(data_bytes)
+        ids = []
+
+        # We'll try to match any custom token at the current position; otherwise single byte
+        pbar = tqdm(total=n, desc="Tokenizing Bytes First + JSON Custom")
+        while i < n:
+            matched = False
+            # Check each custom token
+            for token_str, token_bytes in self.custom_token_bytes.items():
+                length = len(token_bytes)
+                # If next 'length' bytes match this custom token
+                if data_bytes[i:i+length] == token_bytes:
+                    token_id = self.stoi[token_str]  # e.g., 256+
+                    self.record_token(token_id)
+                    ids.append(token_id)
+                    i += length
+                    pbar.update(length)
+                    matched = True
+                    break
+
+            if not matched:
+                # No custom token matched, so we treat this as a single byte
+                single_byte = data_bytes[i:i+1]
+                token_id = self.stoi[single_byte]  # 0..255
+                self.record_token(token_id)
+                ids.append(token_id)
+                i += 1
+                pbar.update(1)
+
+        pbar.close()
+
+        # Finalize metadata with token_counts
+        meta = {
+            "vocab_size": self.vocab_size,
+            "tokenizer": "json_byte_fallback",
+            "custom_tokens": self.custom_tokens,  # i.e., custom tokens from JSON
+            "stoi": self.stoi,
+            "itos": self.itos,
+            "custom_token_count": self.custom_token_count,
+        }
+        self.finalize_meta(meta)
+        return ids
+
+    def detokenize(self, ids):
+        """
+        If ID < 256 => single byte
+        If ID >= 256 => custom token string
+        We'll accumulate bytes in a buffer, and whenever we see a custom token,
+        we flush the buffer as text, then append the custom token as is.
+        """
+        out_pieces = []
+        byte_buffer = []
+
+        for idx, token_id in enumerate(ids):
+            if token_id < 256:
+                # Single raw byte
+                byte_buffer.append(self.itos[token_id])  # e.g. b'\x61'
+            else:
+                # It's a custom token
+                # First flush any accumulated bytes
+                if byte_buffer:
+                    all_bytes = b''.join(byte_buffer)
+                    out_pieces.append(all_bytes.decode('utf-8', errors='replace'))
+                    byte_buffer = []
+                # Append the custom token string
+                custom_str = self.itos[token_id]
+                out_pieces.append(custom_str)
+
+        # Flush remaining bytes
+        if byte_buffer:
+            all_bytes = b''.join(byte_buffer)
+            out_pieces.append(all_bytes.decode('utf-8', errors='replace'))
+
+        return ''.join(out_pieces)
+
+
+class SineWaveTokenizer:
+    """Generate a deterministic sequence of sine wave samples."""
+
+    def __init__(self, args):
+        self.period = args.sine_period
+        self.points_per_period = args.sine_points_per_period
+        self.num_periods = args.sine_num_periods
+        self.amplitude = args.sine_amplitude
+        self.max_val = 255
+
+    def generate_wave(self):
+        total_points = self.num_periods * self.points_per_period
+        values = []
+        for i in range(total_points):
+            x = (i * 2 * math.pi) / self.points_per_period
+            y = 64 + self.amplitude * math.sin(x * self.period)
+            y_clamped = int(max(0, min(self.max_val, round(y))))
+            values.append(y_clamped)
+        return values
+
+    def tokenize(self, data=None):
+        # `data` is unused; generation is parameter driven.
+        return self.generate_wave()
+
+    def detokenize(self, ids):
+        array = np.asarray(ids, dtype=np.int64)
+        return ','.join(map(str, array.tolist()))
 

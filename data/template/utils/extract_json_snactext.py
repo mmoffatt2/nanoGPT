@@ -7,12 +7,12 @@ def append_to_file(file_path, field, snac):
     """Append text data to file incrementally."""
     if os.path.exists(file_path):
         with open(file_path, 'a') as file:
-            file.write('#U: ' + field + '\n')
             file.write('#B: ' + snac + '\n')
+            file.write('#U: ' + field + '\n')
     else:
         with open(file_path, 'w') as file:
-            file.write('#U: ' + field + '\n')
             file.write('#B: ' + snac + '\n')
+            file.write('#U: ' + field + '\n')
 
 
 def process_text_extraction(input_path, value, output_path):
@@ -22,10 +22,8 @@ def process_text_extraction(input_path, value, output_path):
 
     for entry in data:
         field = ""
-        if value == "text":
-            field = entry["text"]
-        elif value == "ipa":
-            field = entry["ipa"]
+        value = value.lower()
+        field = entry.get(value, "")
         raw_snac = entry["sequential_snac_tokens"]
         snac = ""
 
