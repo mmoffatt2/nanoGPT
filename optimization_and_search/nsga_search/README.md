@@ -9,7 +9,7 @@ Minimal utilities for multi-objective hyperparameter/architecture search using N
 - **remote_trainer.py**: training functions via ssh remote connection
 - **test.py**: small example/smoke test
 
-Run Example
+## Run Example
 
 * In test.py, set the TODO section [hosts, user, key_filename]
 * Ensure the master machine has its public key stored in the slave machines
