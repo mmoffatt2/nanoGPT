@@ -17,4 +17,4 @@ sudo apt update -y
 sudo apt upgrade -y
 sudo apt install zsh -y
 
-cp zsh.rc ~/.zshrc
+cp zshrc ~/.zshrc
