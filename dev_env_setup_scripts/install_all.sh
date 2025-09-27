@@ -43,6 +43,9 @@ bash ./06-setup-neovim.sh
 log "Step 7: Setting up bash_aliases..."
 bash ./07-setup-bash-aliases.sh
 
+log "Step 8: Setting up gh cli util..."
+bash ./08-setup-gh-cli-util.sh
+
 echo ""
 log "✅ All setup scripts executed successfully!"
 log "Please log out and log back in for all changes to take effect."
