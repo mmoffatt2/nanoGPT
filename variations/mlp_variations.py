@@ -635,7 +635,7 @@ class MLP_Identity(nn.Module):
 
 mlp_dictionary = {
     "mlp": OriginalMLP,
-    "edgellm_asic": EdgeLLMASICMLP,
+    "edgellm_asic_mlp": EdgeLLMASICMLP,
     "swiglu": Swiglu,
     "identity": MLP_Identity,
     "kan": KanMLP,
