@@ -73,13 +73,13 @@ class PairwiseMetricStats:
 
 
 PAIRWISE_METRIC_INFO: Dict[str, Tuple[str, str]] = {
-    "angle_min": ("Min angle", "radians"),
-    "angle_mean": ("Mean angle", "radians"),
-    "angle_q05": ("5th pct angle", "radians"),
-    "angle_q1": ("25th pct angle", "radians"),
-    "angle_median": ("Median angle", "radians"),
-    "angle_q3": ("75th pct angle", "radians"),
-    "angle_q95": ("95th pct angle", "radians"),
+    "angle_min": ("Min angle", "angle"),
+    "angle_mean": ("Mean angle", "angle"),
+    "angle_q05": ("5th pct angle", "angle"),
+    "angle_q1": ("25th pct angle", "angle"),
+    "angle_median": ("Median angle", "angle"),
+    "angle_q3": ("75th pct angle", "angle"),
+    "angle_q95": ("95th pct angle", "angle"),
     "cos_min": ("Min cosine similarity", "cosine"),
     "cos_mean": ("Mean cosine similarity", "cosine"),
     "cos_q05": ("5th pct cosine similarity", "cosine"),
@@ -235,6 +235,15 @@ def parse_args() -> argparse.Namespace:
         help=(
             "Maximum number of vectors per tensor/group when computing pairwise "
             "angle/cosine statistics. Set to 0 to disable the limit."
+        ),
+    )
+    parser.add_argument(
+        "--angle-units",
+        choices=["degrees", "radians"],
+        default="degrees",
+        help=(
+            "Units used when reporting pairwise angle statistics."
+            " Defaults to degrees."
         ),
     )
     parser.add_argument(
@@ -498,7 +507,13 @@ def save_pairwise_histogram(
             ]
         )
     )
-    plt.xlabel("Angle (radians)" if units == "radians" else "Cosine similarity")
+    if units == "cosine":
+        xlabel = "Cosine similarity"
+    elif units == "degrees":
+        xlabel = "Angle (degrees)"
+    else:
+        xlabel = "Angle (radians)"
+    plt.xlabel(xlabel)
     plt.ylabel("Frequency")
     plt.tight_layout()
     plt.savefig(file_path, dpi=150)
@@ -517,6 +532,7 @@ def compute_pairwise_metrics(
     histogram_bins: int,
     *,
     histogram_prefix: Optional[str] = None,
+    angle_units: str,
 ) -> List[PairwiseMetricStats]:
     num_vectors = vectors.shape[0]
     if num_vectors <= 1:
@@ -545,6 +561,10 @@ def compute_pairwise_metrics(
     cos_q95 = torch.quantile(cosine_values, 0.95, dim=1)
 
     angle_values = torch.acos(cosine_values.clamp(-1.0, 1.0))
+    if angle_units == "degrees":
+        angle_values = torch.rad2deg(angle_values)
+    elif angle_units != "radians":
+        raise ValueError(f"Unsupported angle unit: {angle_units}")
     angle_min = angle_values.min(dim=1).values
     angle_mean = angle_values.mean(dim=1)
     angle_q05 = torch.quantile(angle_values, 0.05, dim=1)
@@ -573,7 +593,8 @@ def compute_pairwise_metrics(
 
     results: List[PairwiseMetricStats] = []
     for metric, tensor_values in metric_values.items():
-        label, units = PAIRWISE_METRIC_INFO.get(metric, (metric, ""))
+        label, unit_kind = PAIRWISE_METRIC_INFO.get(metric, (metric, ""))
+        units = angle_units if unit_kind == "angle" else unit_kind
         summary = summarize_metric_values(tensor_values)
         histogram_path: Optional[Path] = None
         if histogram_dir is not None:
@@ -1111,6 +1132,7 @@ def main() -> None:
                             vectors,
                             histogram_dir,
                             args.histogram_bins,
+                            angle_units=args.angle_units,
                         )
                     )
 
@@ -1168,6 +1190,7 @@ def main() -> None:
                     histogram_dir,
                     args.histogram_bins,
                     histogram_prefix=f"group_{group_name}",
+                    angle_units=args.angle_units,
                 )
             )
 
