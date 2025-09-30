@@ -720,6 +720,7 @@ def parse_args():
     # Attention Variations
     attention_variants = [
                           "causal",
+                          "edgellm_asic_attn",
                           "linear",
                           "ssm",
                           "identity",
