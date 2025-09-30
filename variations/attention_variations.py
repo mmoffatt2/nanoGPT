@@ -687,13 +687,13 @@ class EdgeLLMASICAttention(nn.Module):
         if self.quantization_attn_dict["quantize_asic_attn_softmax_denom"]:
             num_bits = self.quantization_attn_dict["quantize_asic_attn_softmax_denom_bits"]
             quant_method = self.quantization_attn_dict["activations_quant_method"]
-            inv_sum_per_row = fake_quantize_act(self, "asic_attn_softmax_denom", inv_sum_per_row, num_bits, quant_method, iter_num, causal_mask=True)
+            inv_sum_per_row = fake_quantize_act(self, "asic_attn_softmax_denom", inv_sum_per_row, num_bits, quant_method, iter_num)
 
         # quantize exp
         if self.quantization_attn_dict["quantize_asic_attn_softmax_numerator"]:
             num_bits = self.quantization_attn_dict["quantize_asic_attn_softmax_numerator_bits"]
             quant_method = self.quantization_attn_dict["activations_quant_method"]
-            att = fake_quantize_act(self, "asic_attn_softmax_numerator", att, num_bits, quant_method, iter_num, causal_mask=True)
+            att = fake_quantize_act(self, "asic_attn_softmax_numerator", att, num_bits, quant_method, iter_num)
 
         if self.quantization_attn_dict["quantize_attn_act_pv_mult_v_input"]:
             num_bits = self.quantization_attn_dict["quantize_attn_act_pv_mult_v_input_bits"]
