@@ -231,7 +231,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--pairwise-limit",
         type=int,
-        default=4096,
+        default=0,
         help=(
             "Maximum number of vectors per tensor/group when computing pairwise "
             "angle/cosine statistics. Set to 0 to disable the limit."
