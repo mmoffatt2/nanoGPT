@@ -86,7 +86,7 @@ def chord_overlap_details(A, B, alpha=0.9):
     muA/=np.linalg.norm(muA); muB/=np.linalg.norm(muB)
     n=np.cross(muA,muB)
     if np.linalg.norm(n)<1e-9:
-        tmp=np.array([0,0,1.0]);
+        tmp=np.array([0,0,1.0]); 
         if abs(muA@tmp)>0.9: tmp=np.array([1.0,0,0])
         n=np.cross(muA,tmp)
     n/=np.linalg.norm(n)
@@ -159,7 +159,7 @@ def main():
             A = sample_cauchy_projected(mu_x, g1, args.nA, rng)
             B0 = sample_cauchy_projected(mu_x, g2, args.nB, rng)
 
-    # --- Metrics (unchanged; including proximity metrics) ---
+    # --- Metrics ---
     beta=args.beta; Zb=Z_beta_s2(beta); theta_rad=math.radians(args.theta_deg); prox_rad=math.radians(args.prox_deg)
     angles_deg=list(range(0,181,max(1,int(args.angle_step))))
 
@@ -193,12 +193,11 @@ def main():
         hp_ids_B,_=healpix_bin_ids(B, args.healpix_nside); jh, ih, nAocc_h, nBocc_h, uh=occupancy_jaccard(hp_ids_A,hp_ids_B)
         HP_Jaccard.append(jh); HP_rec_AtoB.append(ih/max(nAocc_h,1)); HP_rec_BtoA.append(ih/max(nBocc_h,1))
         ovl_sym,mA,mB,_,_=chord_overlap_details(A,B,args.alpha_chord); Chord_sym.append(ovl_sym); Chord_AtoB.append(mA); Chord_BtoA.append(mB)
-        # Proximity coverage + mean NN angles
         nearest_A=np.arccos(np.clip(AB.max(1),-1,1)); nearest_B=np.arccos(np.clip(AB.max(0),-1,1))
         ProxCov_AinB.append(float(np.mean(nearest_A <= prox_rad))); ProxCov_BinA.append(float(np.mean(nearest_B <= prox_rad)))
         MeanNN_AtoB_deg.append(float(np.degrees(nearest_A.mean()))); MeanNN_BtoA_deg.append(float(np.degrees(nearest_B.mean())))
 
-    # Save CSV (same as previous, with proximity columns)
+    # Save CSV
     df=pd.DataFrame({
         "angle_deg": angles_deg,
         "BC": BC_vals, "MMD2_norm": MMD2_vals, f"OVL_theta_{args.theta_deg}deg": OVL_vals,
@@ -217,7 +216,7 @@ def main():
     })
     df.to_csv(args.out_csv, index=False)
 
-    # --- Plotly (unchanged layout/plumbing, with autoscale buttons) ---
+    # --- Plotly ---
     try:
         import plotly.graph_objects as go
         from plotly.subplots import make_subplots
@@ -231,31 +230,44 @@ def main():
 
     rows, cols = 5, 3
     if args.metric_mode=="overlap":
-        titles=("S² point clouds (A fixed, B rotated by φ about Z)",
-                "Bhattacharyya coefficient (KDE)",
-                "Kernel MMD² (normalized)",
-                f"Angular coverage overlap θ={args.theta_deg:.0f}°",
-                "Angle between mean directions (deg)",
-                "Cosine similarity of means",
-                "Hausdorff distance (deg, geodesic)",
-                f"Fibonacci bins Jaccard (N={args.fib_N})",
-                f"{hp_label} Jaccard",
-                f"Chord overlap on common great circle (α={int(100*args.alpha_chord)}%)",
-                f"Proximity coverage @ δ={args.prox_deg:.0f}° (A|B & B|A)",
-                "Mean nearest angle (deg)",
+        titles=(
+            "S² point clouds (A fixed, B rotated by φ about Z)",
+            # row 2
+            "Bhattacharyya coefficient (KDE)",
+            "Kernel MMD² (normalized)",
+            f"Angular coverage overlap θ={args.theta_deg:.0f}°",
+            # row 3
+            "Angle between mean directions (deg)",
+            "Cosine similarity of means",
+            "Hausdorff distance (deg, geodesic)",
+            # row 4
+            f"Fibonacci bins Jaccard (N={args.fib_N})",
+            f"{hp_label} Jaccard",
+            f"Chord overlap on common great circle (α={int(100*args.alpha_chord)}%)",
+            # row 5 (new panels)
+            f"Proximity coverage @ δ={args.prox_deg:.0f}° (A|B & B|A)",
+            "Mean nearest angle (deg)",
+            ""  # keep grid (empty slot at row5,col3)
         )
     else:
-        titles=("S² point clouds (A fixed, B rotated by φ about Z)",
-                "KDE-KL merge: KL(A||B) & KL(B||A)",
-                f"Angular coverage merges θ={args.theta_deg:.0f}°: Cov(A|B), Cov(B|A)",
-                "Directed Hausdorff distances (deg)",
-                "Fibonacci bin recall: |A∩B|/|A| and /|B|",
-                "HEALPix bin recall: |A∩B|/|A| and /|B|",
-                f"Chord merges (α={int(100*args.alpha_chord)}%): inter/width_A and inter/width_B",
-                "Angle between mean directions (deg)",
-                "Cosine similarity of means",
-                f"Proximity coverage @ δ={args.prox_deg:.0f}° (A|B & B|A)",
-                "Mean nearest angle (deg)"
+        titles=(
+            "S² point clouds (A fixed, B rotated by φ about Z)",
+            # row 2
+            "KDE-KL merge: KL(A||B) & KL(B||A)",
+            f"Angular coverage merges θ={args.theta_deg:.0f}°: Cov(A|B), Cov(B|A)",
+            "Directed Hausdorff distances (deg)",
+            # row 3
+            "Fibonacci bin recall: |A∩B|/|A| and /|B|",
+            "HEALPix bin recall: |A∩B|/|A| and /|B|",
+            f"Chord merges (α={int(100*args.alpha_chord)}%): inter/width_A and inter/width_B",
+            # row 4
+            "Angle between mean directions (deg)",
+            "Cosine similarity of means",
+            "",
+            # row 5 (new panels)
+            f"Proximity coverage @ δ={args.prox_deg:.0f}° (A|B & B|A)",
+            "Mean nearest angle (deg)",
+            ""
         )
 
     fig=make_subplots(rows=rows, cols=cols, row_heights=row_heights,
@@ -268,20 +280,20 @@ def main():
 
     fig.update_layout(title={"text":"<b>Overlap on S² — Cauchy-around-μx (projected), B rotated about Z</b>","x":0.5,"xanchor":"center"},
                       title_font_size=20, height=args.fig_height, scene=dict(aspectmode="data"),
-                      margin=dict(l=10,r=10,t=60,b=10), showlegend=False)
+                      margin=dict(l=10,r=10,t=60,b=80), showlegend=False)
 
     # 3D sphere and points
     u=np.linspace(0,2*np.pi,60); v=np.linspace(0,np.pi,30); uu,vv=np.meshgrid(u,v); xs=np.cos(uu)*np.sin(vv); ys=np.sin(uu)*np.sin(vv); zs=np.cos(vv)
     idxA=np.random.choice(A.shape[0], size=min(args.plot_subset, A.shape[0]), replace=False)
     idxB=np.random.choice(B0.shape[0], size=min(args.plot_subset, B0.shape[0]), replace=False)
-    A_sub=A[idxA]; B0_sub=B0[idxB]; B_init=(B0_sub@np.array([[1,0,0],[0,1,0],[0,0,1]]).T)
+    A_sub=A[idxA]; B0_sub=B0[idxB]; B_init=(B0_sub@np.eye(3).T)
     fig.add_trace(go.Surface(x=xs,y=ys,z=zs,opacity=0.2,showscale=False), row=1,col=1)
     fig.add_trace(go.Scatter3d(x=A_sub[:,0],y=A_sub[:,1],z=A_sub[:,2],mode="markers",
                                marker=dict(size=args.marker_size, color=args.color_A)), row=1,col=1)
     fig.add_trace(go.Scatter3d(x=B_init[:,0],y=B_init[:,1],z=B_init[:,2],mode="markers",
                                marker=dict(size=args.marker_size, color=args.color_B)), row=1,col=1)
 
-    # Curves (colored by cloud in merge mode, neutral in overlap) + extra panels (proximity)
+    # Curves
     def add_lines_overlap():
         c1, c2, c3 = "#6C7A89", "#34495E", "#95A5A6"
         fig.add_trace(go.Scatter(x=angles_deg,y=BC_vals,mode="lines",line=dict(color=c1)), row=2,col=1)
@@ -293,6 +305,7 @@ def main():
         fig.add_trace(go.Scatter(x=angles_deg,y=Fib_Jaccard,mode="lines",line=dict(color=c1)), row=4,col=1)
         fig.add_trace(go.Scatter(x=angles_deg,y=HP_Jaccard,mode="lines",line=dict(color=c2)), row=4,col=2)
         fig.add_trace(go.Scatter(x=angles_deg,y=Chord_sym,mode="lines",line=dict(color=c3)), row=4,col=3)
+        # Proximity + mean NN
         fig.add_trace(go.Scatter(x=angles_deg,y=ProxCov_AinB,mode="lines",line=dict(color=c1)), row=5,col=1)
         fig.add_trace(go.Scatter(x=angles_deg,y=ProxCov_BinA,mode="lines",line=dict(color=c2)), row=5,col=1)
         fig.add_trace(go.Scatter(x=angles_deg,y=MeanNN_AtoB_deg,mode="lines",line=dict(color=c1)), row=5,col=2)
@@ -312,6 +325,7 @@ def main():
         fig.add_trace(go.Scatter(x=angles_deg,y=Chord_BtoA,mode="lines",line=dict(color=args.color_B)), row=3,col=3)
         fig.add_trace(go.Scatter(x=angles_deg,y=ang_means,mode="lines",line=dict(color="#7F8C8D")), row=4,col=1)
         fig.add_trace(go.Scatter(x=angles_deg,y=cos_means,mode="lines",line=dict(color="#7F8C8D")), row=4,col=2)
+        # Proximity + mean NN
         fig.add_trace(go.Scatter(x=angles_deg,y=ProxCov_AinB,mode="lines",line=dict(color=args.color_A)), row=5,col=1)
         fig.add_trace(go.Scatter(x=angles_deg,y=ProxCov_BinA,mode="lines",line=dict(color=args.color_B)), row=5,col=1)
         fig.add_trace(go.Scatter(x=angles_deg,y=MeanNN_AtoB_deg,mode="lines",line=dict(color=args.color_A)), row=5,col=2)
@@ -324,8 +338,7 @@ def main():
     fig.update_xaxes(title_text="φ (deg)", row=5, col=1); fig.update_yaxes(title_text="Prox. cov", row=5, col=1)
     fig.update_xaxes(title_text="φ (deg)", row=5, col=2); fig.update_yaxes(title_text="Mean NN angle (deg)", row=5, col=2)
 
-    # Vertical lines (guides) and frames as before
-    # Determine y-ranges to keep the guides inside the plots
+    # Vertical lines and frames
     if args.metric_mode=="overlap":
         y_ranges=[(min(BC_vals),max(BC_vals)),(min(MMD2_vals),max(MMD2_vals)),(0,1),
                   (min(ang_means),max(ang_means)),(-1,1),(min(np.maximum(Haus_AtoB,Haus_BtoA)),max(np.maximum(Haus_AtoB,Haus_BtoA))),
@@ -337,6 +350,7 @@ def main():
                   (0,1),(0,1),(0,1),(min(ang_means),max(ang_means)),(-1,1),(0,1),
                   (min(MeanNN_AtoB_deg+MeanNN_BtoA_deg),max(MeanNN_AtoB_deg+MeanNN_BtoA_deg))]
         v_coords=[(2,1),(2,2),(2,3),(3,1),(3,2),(3,3),(4,1),(4,2),(5,1),(5,2)]
+
     vline_indices=[]
     for (row,col),yr in zip(v_coords,y_ranges):
         fig.add_trace(go.Scatter(x=[angles_deg[0], angles_deg[0]], y=list(yr), mode="lines",
@@ -354,8 +368,12 @@ def main():
         frames.append(go.Frame(name=str(ang), data=updates, traces=[2]+vline_indices))
     fig.frames=frames
 
-    # Save
+    # Slider (progress bar) with extra bottom padding; add autoscale/reset buttons
+    steps=[dict(method="animate", args=[[str(ang)],{"mode":"immediate","frame":{"duration":0,"redraw":True},"transition":{"duration":0}}], label=f"{ang}°") for ang in angles_deg]
+    sliders=[dict(active=0, currentvalue={"prefix":"Rotation φ = "}, pad={"t":30,"b":15}, steps=steps)]
+    fig.update_layout(sliders=sliders)
     config=dict(displaylogo=False, modeBarButtonsToAdd=["autoScale2d","resetScale2d"], scrollZoom=True)
+
     from plotly.offline import plot as plotly_save
     plotly_save(fig, filename=args.out_html, auto_open=False, config=config)
     print("Wrote:", args.out_html); print("Wrote:", args.out_csv)
