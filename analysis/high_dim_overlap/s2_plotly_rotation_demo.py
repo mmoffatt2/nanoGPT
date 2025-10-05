@@ -58,22 +58,25 @@ def kde_kl_directional(A,B,beta,Zb,eps=1e-12):
     return float(np.mean(np.log(np.maximum(pA,eps))-np.log(np.maximum(qB,eps))))
 
 def main():
-    ap=argparse.ArgumentParser(description="S^2 Plotly demo with overlap/merge modes (polished)")
+    ap=argparse.ArgumentParser(description="S^2 Plotly demo with overlap/merge modes (polished + sizing + autoscale)")
     ap.add_argument("--mode", choices=["gen","pt"], default="gen")
     ap.add_argument("--pt", type=str, default=None)
-    # point counts
+    # dataset sizes
     ap.add_argument("--nA", type=int, default=1000)
     ap.add_argument("--nB", type=int, default=1000)
-    # Cauchy scales (distinct); --gamma kept for back-compat if you want to set both at once
-    ap.add_argument("--gamma", type=float, default=None, help="If set, applies to both distributions unless gamma1/gamma2 are given")
+    # Cauchy scales
+    ap.add_argument("--gamma", type=float, default=None, help="If set, applies to both unless gamma1/gamma2 provided")
     ap.add_argument("--gamma1", type=float, default=0.7, help="Cauchy scale for A")
     ap.add_argument("--gamma2", type=float, default=0.7, help="Cauchy scale for B")
-    # colors and plotting
-    ap.add_argument("--color-A", type=str, default="#E74C3C", help="Color for A (CSS/hex)")
-    ap.add_argument("--color-B", type=str, default="#2ECC71", help="Color for B (CSS/hex)")
+    # colors / point size / draw subset
+    ap.add_argument("--color-A", type=str, default="#E74C3C", help="Color for A (hex/CSS)")
+    ap.add_argument("--color-B", type=str, default="#2ECC71", help="Color for B (hex/CSS)")
     ap.add_argument("--marker-size", type=int, default=4, help="3D marker size")
-    ap.add_argument("--plot-subset", type=int, default=900, help="Max #points per cloud to display")
-    # metrics params
+    ap.add_argument("--plot-subset", type=int, default=900, help="Max #points per cloud to display in 3D")
+    # layout sizing
+    ap.add_argument("--fig-height", type=int, default=1100, help="Figure height in pixels")
+    ap.add_argument("--scene-frac", type=float, default=0.45, help="Fraction of height for the 3D scene row (0<scene-frac<1)")
+    # metric params
     ap.add_argument("--beta", type=float, default=12.0)
     ap.add_argument("--theta-deg", type=float, default=60.0)
     ap.add_argument("--fib-N", type=int, default=1200)
@@ -88,8 +91,8 @@ def main():
 
     rng=np.random.default_rng(args.seed)
     # choose gammas
-    g1 = args.gamma1 if args.gamma is None else args.gamma1 if args.gamma1!=0.7 else args.gamma
-    g2 = args.gamma2 if args.gamma is None else args.gamma2 if args.gamma2!=0.7 else args.gamma
+    g1 = args.gamma1 if args.gamma is None else (args.gamma1 if args.gamma1!=0.7 else args.gamma)
+    g2 = args.gamma2 if args.gamma is None else (args.gamma2 if args.gamma2!=0.7 else args.gamma)
     if g1 is None: g1 = args.gamma1
     if g2 is None: g2 = args.gamma2
 
@@ -116,7 +119,7 @@ def main():
     fib_grid=spherical_fibonacci_points(args.fib_N); fib_ids_A=np.argmax(A@fib_grid.T,axis=1)
     hp_ids_A, hp_label=healpix_bin_ids(A, args.healpix_nside)
 
-    # collect metrics across angles
+    # metrics across angles
     BC_vals=[]; MMD2_vals=[]; OVL_vals=[]; KL_AtoB_vals=[]; KL_BtoA_vals=[]; Cov_A_given_B=[]; Cov_B_given_A=[]
     Haus_AtoB=[]; Haus_BtoA=[]; Fib_Jaccard=[]; Fib_rec_AtoB=[]; Fib_rec_BtoA=[]; HP_Jaccard=[]; HP_rec_AtoB=[]; HP_rec_BtoA=[]
     Chord_sym=[]; Chord_AtoB=[]; Chord_BtoA=[]; ang_means=[]; cos_means=[]
@@ -159,10 +162,15 @@ def main():
         print("Plotly not available; saved CSV only:", args.out_csv); return
 
     # 3D sphere and subsample
-    u=np.linspace(0,2*np.pi,60); v=np.linspace(0,np.pi,30); uu,vv=np.meshgrid(u,v); xs=np.cos(uu)*np.sin(vv); ys=np.sin(uu)*np.cos(vv); zs=np.cos(vv)
+    u=np.linspace(0,2*np.pi,60); v=np.linspace(0,np.pi,30); uu,vv=np.meshgrid(u,v); xs=np.cos(uu)*np.sin(vv); ys=np.sin(uu)*np.sin(vv); zs=np.cos(vv)
     idxA=np.random.choice(A.shape[0], size=min(args.plot_subset, A.shape[0]), replace=False)
     idxB=np.random.choice(B0.shape[0], size=min(args.plot_subset, B0.shape[0]), replace=False)
     A_sub=A[idxA]; B0_sub=B0[idxB]; B_init=(B0_sub@rotate_z(math.radians(angles_deg[0])).T)
+
+    # Row heights: scene row gets fraction; rest share remaining equally
+    sf=max(0.05, min(0.9, float(args.scene_frac)))
+    rest=(1.0-sf)/3.0
+    row_heights=[sf, rest, rest, rest]
 
     rows, cols = 4, 3
     if args.metric_mode=="overlap":
@@ -174,14 +182,15 @@ def main():
                 f"Angular coverage merges θ={args.theta_deg:.0f}°: Cov(A|B), Cov(B|A)","Directed Hausdorff distances (deg)",
                 "Fibonacci bin recall: |A∩B|/|A| and /|B|","HEALPix bin recall: |A∩B|/|A| and /|B|",
                 f"Chord merges (α={int(100*args.alpha_chord)}%): inter/width_A and inter/width_B","Angle between mean directions (deg)","Cosine similarity of means","")
-    fig=make_subplots(rows=rows, cols=cols,
+
+    fig=make_subplots(rows=rows, cols=cols, row_heights=row_heights,
                       specs=[[{"type":"scene","colspan":3}, None, None],
                              [{"type":"xy"},{"type":"xy"},{"type":"xy"}],
                              [{"type":"xy"},{"type":"xy"},{"type":"xy"}],
                              [{"type":"xy"},{"type":"xy"},{"type":"xy"}]],
                       subplot_titles=titles)
     fig.update_layout(title={"text":"<b>Overlap on S² — Cauchy-around-μx (projected), B rotated about Z</b>","x":0.5,"xanchor":"center"},
-                      title_font_size=20, height=1100, scene=dict(aspectmode="data"),
+                      title_font_size=20, height=args.fig_height, scene=dict(aspectmode="data"),
                       margin=dict(l=10,r=10,t=60,b=10), showlegend=False)
 
     fig.add_trace(go.Surface(x=xs,y=ys,z=zs,opacity=0.2,showscale=False), row=1, col=1)
@@ -190,6 +199,7 @@ def main():
     fig.add_trace(go.Scatter3d(x=B_init[:,0], y=B_init[:,1], z=B_init[:,2], mode="markers", name="B",
                                marker=dict(size=args.marker_size, color=args.color_B), showlegend=False), row=1, col=1)
 
+    # Metric traces
     if args.metric_mode=="overlap":
         c1, c2, c3 = "#6C7A89", "#34495E", "#95A5A6"
         fig.add_trace(go.Scatter(x=angles_deg, y=BC_vals, mode="lines", line=dict(color=c1), showlegend=False), row=2, col=1)
@@ -220,17 +230,19 @@ def main():
         fig.add_trace(go.Scatter(x=angles_deg, y=Chord_BtoA, mode="lines", line=dict(color=args.color_B), showlegend=False), row=3, col=3)
         fig.add_trace(go.Scatter(x=angles_deg, y=ang_means, mode="lines", line=dict(color="#7F8C8D"), showlegend=False), row=4, col=1)
         fig.add_trace(go.Scatter(x=angles_deg, y=cos_means, mode="lines", line=dict(color="#7F8C8D"), showlegend=False), row=4, col=2)
-        y_ranges=[(min(KL_AtoB_vals+KL_BtoA_vals),max(KL_AtoB_vals+KL_BtoA_vals)),(0,1),(min(Haus_AtoB+Haus_BtoA),max(Haus_AtoB+Haus_BtoA)),
+        y_ranges=[(min(KL_AtoB_vals+KL_BtoA_vals),max(KL_AtoB_vals+KL_BtoA_vals)),(0,1),
+                  (min(Haus_AtoB+Haus_BtoA),max(Haus_AtoB+Haus_BtoA)),
                   (0,1),(0,1),(0,1),(min(ang_means),max(ang_means)),(-1,1)]
         v_coords=[(2,1),(2,2),(2,3),(3,1),(3,2),(3,3),(4,1),(4,2)]
 
+    # Vertical lines
     vline_indices=[]
     for (row,col),yr in zip(v_coords,y_ranges):
         tr = go.Scatter(x=[angles_deg[0], angles_deg[0]], y=list(yr), mode="lines",
                         line=dict(dash="dash", width=1), showlegend=False)
         fig.add_trace(tr, row=row, col=col); vline_indices.append(len(fig.data)-1)
 
-    # Frames updating B scatter + vlines only
+    # Frames (update B scatter and vlines)
     frames=[]
     for ang in angles_deg:
         B_sub=(B0_sub@rotate_z(math.radians(ang)).T)
@@ -245,7 +257,8 @@ def main():
 
     out_html=args.out_html if args.out_html else ("s2_merge_plotly.html" if args.metric_mode=="merge" else "s2_overlap_plotly.html")
     from plotly.offline import plot as plotly_save
-    plotly_save(fig, filename=out_html, auto_open=False)
+    config=dict(displaylogo=False, modeBarButtonsToAdd=["autoScale2d","resetScale2d"], scrollZoom=True)
+    plotly_save(fig, filename=out_html, auto_open=False, config=config)
     print("Wrote:", out_html); print("Wrote:", args.out_csv)
 
 if __name__=="__main__":
