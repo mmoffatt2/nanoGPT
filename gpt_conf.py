@@ -366,6 +366,8 @@ class GPTConfig:
     # Layernorm Alternatives and Options
     norm_variant_attn: str = "rmsnorm"
     norm_variant_output: str = "rmsnorm"
+    norm_variant_wte: str | None = None
+    norm_variant_abs: str | None = None
     bias: bool = False # True: bias in Linears and LayerNorms, like GPT-2. False: a bit better and faster
     prmsnorm_pct: float = 0.0625
     krmsnorm_num: float = 10

@@ -146,6 +146,15 @@ class GPT(nn.Module):
         if config.use_embedding_scale:
             self.embedding_scale = nn.Parameter(torch.sqrt(torch.tensor(config.n_embd)))
 
+        # Optional post-embedding normalizations
+        self.post_embedding_norm = None
+        if config.norm_variant_wte is not None:
+            self.post_embedding_norm = norm_dictionary[config.norm_variant_wte](config)
+
+        self.post_abs_pos_embedding_norm = None
+        if config.norm_variant_abs is not None:
+            self.post_abs_pos_embedding_norm = norm_dictionary[config.norm_variant_abs](config)
+
         # Learned Steering Vectors
         self.use_lsv = config.use_lsv
         self.lsv_index = config.lsv_index
@@ -561,10 +570,16 @@ class GPT(nn.Module):
             if self.n_embd_wte:
                 tok_emb = self.transformer.scale_up(tok_emb)
 
+            if self.post_embedding_norm is not None:
+                tok_emb = self.post_embedding_norm(tok_emb)
+
             if self.config.use_abs_pos_embeddings:
                 pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
                 pos_emb = self.transformer.wpe(pos) # position embeddings of shape (t, n_embd)
-                x = self.transformer.drop(tok_emb + pos_emb)
+                x = tok_emb + pos_emb
+                if self.post_abs_pos_embedding_norm is not None:
+                    x = self.post_abs_pos_embedding_norm(x)
+                x = self.transformer.drop(x)
             else:
                 x = self.transformer.drop(tok_emb)
 
@@ -681,14 +696,23 @@ class GPT(nn.Module):
             tok_emb = self.transformer[f'wte_{dataset_idx}'](idx)
         else:
             tok_emb = self.transformer.wte(idx)
-        if self.n_embd_wte:
-            tok_emb = self.transformer.scale_up(tok_emb)
+
         if self.config.use_embedding_scale:
             tok_emb = tok_emb * self.embedding_scale
+
+        if self.n_embd_wte:
+            tok_emb = self.transformer.scale_up(tok_emb)
+
+        if self.post_embedding_norm is not None:
+            tok_emb = self.post_embedding_norm(tok_emb)
+
         if self.config.use_abs_pos_embeddings:
             t = idx.size(1)
             pos = torch.arange(0, t, dtype=torch.long, device=device)
             tok_emb = tok_emb + self.transformer.wpe(pos)
+            if self.post_abs_pos_embedding_norm is not None:
+                tok_emb = self.post_abs_pos_embedding_norm(tok_emb)
+
         return self.transformer.drop(tok_emb)
 
     def forward_embedded(self, x_emb, iter_num=None, return_hidden=False, dataset_idx=None):
