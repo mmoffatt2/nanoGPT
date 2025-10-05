@@ -36,15 +36,16 @@ def arc_intersection_length(a1,b1,a2,b2):
             if hi>lo: inter += (hi-lo)
     return float(inter)
 def chord_overlap_details(A,B,alpha=0.9):
-    muA=A.mean(0); muB=B.mean(0); 
+    muA=A.mean(0); muB=B.mean(0)
     if np.linalg.norm(muA)<1e-12 or np.linalg.norm(muB)<1e-12: return (0.0,0.0,0.0,0.0,0.0)
     muA/=np.linalg.norm(muA); muB/=np.linalg.norm(muB)
-    n=np.cross(muA,muB); 
-    if np.linalg.norm(n)<1e-9: 
+    n=np.cross(muA,muB)
+    if np.linalg.norm(n)<1e-9:
         tmp=np.array([0.0,0.0,1.0]); 
         if abs(muA@tmp)>0.9: tmp=np.array([1.0,0.0,0.0])
         n=np.cross(muA,tmp)
-    n/=np.linalg.norm(n); e1=muA-(muA@n)*n; 
+    n/=np.linalg.norm(n)
+    e1=muA-(muA@n)*n
     if np.linalg.norm(e1)<1e-12: e1=muB-(muB@n)*n
     e1/=np.linalg.norm(e1); e2=np.cross(n,e1)
     angA=np.arctan2(A@e2,A@e1); angB=np.arctan2(B@e2,B@e1)
@@ -57,11 +58,22 @@ def kde_kl_directional(A,B,beta,Zb,eps=1e-12):
     return float(np.mean(np.log(np.maximum(pA,eps))-np.log(np.maximum(qB,eps))))
 
 def main():
-    ap=argparse.ArgumentParser(description="S^2 Plotly demo with overlap/merge modes")
+    ap=argparse.ArgumentParser(description="S^2 Plotly demo with overlap/merge modes (polished)")
     ap.add_argument("--mode", choices=["gen","pt"], default="gen")
     ap.add_argument("--pt", type=str, default=None)
-    ap.add_argument("--nA", type=int, default=1000); ap.add_argument("--nB", type=int, default=1000)
-    ap.add_argument("--gamma", type=float, default=0.7)
+    # point counts
+    ap.add_argument("--nA", type=int, default=1000)
+    ap.add_argument("--nB", type=int, default=1000)
+    # Cauchy scales (distinct); --gamma kept for back-compat if you want to set both at once
+    ap.add_argument("--gamma", type=float, default=None, help="If set, applies to both distributions unless gamma1/gamma2 are given")
+    ap.add_argument("--gamma1", type=float, default=0.7, help="Cauchy scale for A")
+    ap.add_argument("--gamma2", type=float, default=0.7, help="Cauchy scale for B")
+    # colors and plotting
+    ap.add_argument("--color-A", type=str, default="#E74C3C", help="Color for A (CSS/hex)")
+    ap.add_argument("--color-B", type=str, default="#2ECC71", help="Color for B (CSS/hex)")
+    ap.add_argument("--marker-size", type=int, default=4, help="3D marker size")
+    ap.add_argument("--plot-subset", type=int, default=900, help="Max #points per cloud to display")
+    # metrics params
     ap.add_argument("--beta", type=float, default=12.0)
     ap.add_argument("--theta-deg", type=float, default=60.0)
     ap.add_argument("--fib-N", type=int, default=1200)
@@ -69,13 +81,18 @@ def main():
     ap.add_argument("--alpha-chord", type=float, default=0.9)
     ap.add_argument("--angle-step", type=int, default=10)
     ap.add_argument("--seed", type=int, default=7)
-    ap.add_argument("--metric-mode", choices=["overlap","merge"], default="merge",
-                    help="Overlap (symmetric) or Merge (directional A→B, B→A)")
-    ap.add_argument("--out-html", type=str, default="s2_overlap_plotly.html")
+    ap.add_argument("--metric-mode", choices=["overlap","merge"], default="merge")
+    ap.add_argument("--out-html", type=str, default="s2_merge_plotly.html")
     ap.add_argument("--out-csv", type=str, default="s2_rotation_metrics.csv")
     args=ap.parse_args()
 
     rng=np.random.default_rng(args.seed)
+    # choose gammas
+    g1 = args.gamma1 if args.gamma is None else args.gamma1 if args.gamma1!=0.7 else args.gamma
+    g2 = args.gamma2 if args.gamma is None else args.gamma2 if args.gamma2!=0.7 else args.gamma
+    if g1 is None: g1 = args.gamma1
+    if g2 is None: g2 = args.gamma2
+
     if args.mode=="pt":
         import torch
         obj=torch.load(args.pt, map_location="cpu")
@@ -86,27 +103,23 @@ def main():
         if A.shape[1]!=3 or B0.shape[1]!=3: raise ValueError("Data must be (n,3) for S^2 demo.")
     else:
         mu_x=np.array([1.0,0.0,0.0])
-        A=sample_cauchy_projected(mu_x,args.gamma,args.nA,rng)
-        B0=sample_cauchy_projected(mu_x,args.gamma,args.nB,rng)
+        A=sample_cauchy_projected(mu_x, g1, args.nA, rng)
+        B0=sample_cauchy_projected(mu_x, g2, args.nB, rng)
 
     beta=args.beta; Zb=Z_beta_s2(beta); theta_rad=math.radians(args.theta_deg)
     angles_deg=list(range(0,181,max(1,int(args.angle_step))))
 
     X_eval=sample_uniform_s2(2000,rng); pA_eval=kde_density_at(A,X_eval,beta,Zb)
-    AA=A@A.T; np.fill_diagonal(AA,-np.inf)
-    kAA=np.sum(np.exp(beta*AA)[AA>-np.inf])/(A.shape[0]*(A.shape[0]-1))
-    BB=B0@B0.T; np.fill_diagonal(BB,-np.inf)
-    kBB=np.sum(np.exp(beta*BB)[BB>-np.inf])/(B0.shape[0]*(B0.shape[0]-1))
+    AA=A@A.T; np.fill_diagonal(AA,-np.inf); kAA=np.sum(np.exp(beta*AA)[AA>-np.inf])/(A.shape[0]*(A.shape[0]-1))
+    BB=B0@B0.T; np.fill_diagonal(BB,-np.inf); kBB=np.sum(np.exp(beta*BB)[BB>-np.inf])/(B0.shape[0]*(B0.shape[0]-1))
 
-    fib_grid=spherical_fibonacci_points(args.fib_N)
-    fib_ids_A=np.argmax(A@fib_grid.T,axis=1)
-    hp_ids_A, hp_label=healpix_bin_ids(A,args.healpix_nside)
+    fib_grid=spherical_fibonacci_points(args.fib_N); fib_ids_A=np.argmax(A@fib_grid.T,axis=1)
+    hp_ids_A, hp_label=healpix_bin_ids(A, args.healpix_nside)
 
-    BC_vals=[]; MMD2_vals=[]; OVL_vals=[]
-    KL_AtoB=[]; KL_BtoA=[]; Cov_A_given_B=[]; Cov_B_given_A=[]
-    Haus_AtoB=[]; Haus_BtoA=[]; Fib_Jaccard=[]; Fib_rec_AtoB=[]; Fib_rec_BtoA=[]
-    HP_Jaccard=[]; HP_rec_AtoB=[]; HP_rec_BtoA=[]; Chord_sym=[]; Chord_AtoB=[]; Chord_BtoA=[]
-    ang_means=[]; cos_means=[]
+    # collect metrics across angles
+    BC_vals=[]; MMD2_vals=[]; OVL_vals=[]; KL_AtoB_vals=[]; KL_BtoA_vals=[]; Cov_A_given_B=[]; Cov_B_given_A=[]
+    Haus_AtoB=[]; Haus_BtoA=[]; Fib_Jaccard=[]; Fib_rec_AtoB=[]; Fib_rec_BtoA=[]; HP_Jaccard=[]; HP_rec_AtoB=[]; HP_rec_BtoA=[]
+    Chord_sym=[]; Chord_AtoB=[]; Chord_BtoA=[]; ang_means=[]; cos_means=[]
     for ang in angles_deg:
         R=rotate_z(math.radians(ang)); B=B0@R.T
         qB_eval=kde_density_at(B,X_eval,beta,Zb); BC_vals.append(float(np.mean(np.sqrt(pA_eval*qB_eval))))
@@ -115,11 +128,11 @@ def main():
         muA=A.mean(0); muB=B.mean(0); muA/=np.linalg.norm(muA); muB/=np.linalg.norm(muB); c=float(np.clip(muA@muB,-1,1))
         cos_means.append(c); ang_means.append(math.degrees(math.acos(c)))
         hAB,hBA=hausdorff_directed_from_AB(AB); Haus_AtoB.append(math.degrees(hAB)); Haus_BtoA.append(math.degrees(hBA))
-        KL_AtoB.append(kde_kl_directional(A,B,beta,Zb)); KL_BtoA.append(kde_kl_directional(B,A,beta,Zb))
-        fib_ids_B=np.argmax(B@fib_grid.T,axis=1); jacc,inter,nAocc,nBocc,uni=occupancy_jaccard(fib_ids_A,fib_ids_B)
+        KL_AtoB_vals.append(kde_kl_directional(A,B,beta,Zb)); KL_BtoA_vals.append(kde_kl_directional(B,A,beta,Zb))
+        fib_ids_B=np.argmax(B@fib_grid.T,axis=1); jacc, inter, nAocc, nBocc, uni=occupancy_jaccard(fib_ids_A,fib_ids_B)
         Fib_Jaccard.append(jacc); Fib_rec_AtoB.append(inter/max(nAocc,1)); Fib_rec_BtoA.append(inter/max(nBocc,1))
-        hp_ids_B,_=healpix_bin_ids(B,args.healpix_nside); jh,interh,nAocc_h,nBocc_h,unih=occupancy_jaccard(hp_ids_A,hp_ids_B)
-        HP_Jaccard.append(jh); HP_rec_AtoB.append(interh/max(nAocc_h,1)); HP_rec_BtoA.append(interh/max(nBocc_h,1))
+        hp_ids_B,_=healpix_bin_ids(B,args.healpix_nside); jh, ih, nAocc_h, nBocc_h, uh = occupancy_jaccard(hp_ids_A,hp_ids_B)
+        HP_Jaccard.append(jh); HP_rec_AtoB.append(ih/max(nAocc_h,1)); HP_rec_BtoA.append(ih/max(nBocc_h,1))
         ovl_sym,mA,mB,wA,wB=chord_overlap_details(A,B,args.alpha_chord); Chord_sym.append(ovl_sym); Chord_AtoB.append(mA); Chord_BtoA.append(mB)
 
     df=pd.DataFrame({
@@ -129,7 +142,7 @@ def main():
         "Hausdorff_sym_deg": np.maximum(Haus_AtoB, Haus_BtoA),
         f"Fib_Jaccard_N{args.fib_N}": Fib_Jaccard, f"HP_Jaccard_{hp_label}": HP_Jaccard,
         f"Chord_overlap_alpha{int(100*args.alpha_chord)}pct": Chord_sym,
-        "KL_AtoB": KL_AtoB, "KL_BtoA": KL_BtoA,
+        "KL_AtoB": KL_AtoB_vals, "KL_BtoA": KL_BtoA_vals,
         f"Cov_A|B_theta_{args.theta_deg}deg": Cov_A_given_B, f"Cov_B|A_theta_{args.theta_deg}deg": Cov_B_given_A,
         "Haus_AtoB_deg": Haus_AtoB, "Haus_BtoA_deg": Haus_BtoA,
         f"Fib_recall_AinB_N{args.fib_N}": Fib_rec_AtoB, f"Fib_recall_BinA_N{args.fib_N}": Fib_rec_BtoA,
@@ -145,21 +158,22 @@ def main():
     except Exception:
         print("Plotly not available; saved CSV only:", args.out_csv); return
 
+    # 3D sphere and subsample
+    u=np.linspace(0,2*np.pi,60); v=np.linspace(0,np.pi,30); uu,vv=np.meshgrid(u,v); xs=np.cos(uu)*np.sin(vv); ys=np.sin(uu)*np.cos(vv); zs=np.cos(vv)
+    idxA=np.random.choice(A.shape[0], size=min(args.plot_subset, A.shape[0]), replace=False)
+    idxB=np.random.choice(B0.shape[0], size=min(args.plot_subset, B0.shape[0]), replace=False)
+    A_sub=A[idxA]; B0_sub=B0[idxB]; B_init=(B0_sub@rotate_z(math.radians(angles_deg[0])).T)
+
     rows, cols = 4, 3
     if args.metric_mode=="overlap":
-        titles=("S² point clouds (A fixed, B rotated by φ about Z)",
-                "Bhattacharyya coefficient (KDE)","Kernel MMD² (normalized)",f"Angular coverage overlap θ={args.theta_deg:.0f}°",
+        titles=("S² point clouds (A fixed, B rotated by φ about Z)","Bhattacharyya coefficient (KDE)","Kernel MMD² (normalized)",f"Angular coverage overlap θ={args.theta_deg:.0f}°",
                 "Angle between mean directions (deg)","Cosine similarity of means","Hausdorff distance (deg, geodesic)",
-                f"Fibonacci bins Jaccard (N={args.fib_N})", f"{hp_label} Jaccard", f"Chord overlap on common great circle (α={int(100*args.alpha_chord)}%)", "", "")
+                f"Fibonacci bins Jaccard (N={args.fib_N})", f"{hp_label} Jaccard", f"Chord overlap on common great circle (α={int(100*args.alpha_chord)}%)","", "")
     else:
-        titles=("S² point clouds (A fixed, B rotated by φ about Z)",
-                "KDE-KL merge: KL(A||B) & KL(B||A)",
-                f"Angular coverage merges θ={args.theta_deg:.0f}°: Cov(A|B), Cov(B|A)",
-                "Directed Hausdorff distances (deg)",
-                "Fibonacci bin recall: |A∩B|/|A| and /|B|",
-                "HEALPix bin recall: |A∩B|/|A| and /|B|",
-                f"Chord merges (α={int(100*args.alpha_chord)}%): inter/width_A and inter/width_B",
-                "Angle between mean directions (deg)","Cosine similarity of means","")
+        titles=("S² point clouds (A fixed, B rotated by φ about Z)","KDE-KL merge: KL(A||B) & KL(B||A)",
+                f"Angular coverage merges θ={args.theta_deg:.0f}°: Cov(A|B), Cov(B|A)","Directed Hausdorff distances (deg)",
+                "Fibonacci bin recall: |A∩B|/|A| and /|B|","HEALPix bin recall: |A∩B|/|A| and /|B|",
+                f"Chord merges (α={int(100*args.alpha_chord)}%): inter/width_A and inter/width_B","Angle between mean directions (deg)","Cosine similarity of means","")
     fig=make_subplots(rows=rows, cols=cols,
                       specs=[[{"type":"scene","colspan":3}, None, None],
                              [{"type":"xy"},{"type":"xy"},{"type":"xy"}],
@@ -168,83 +182,71 @@ def main():
                       subplot_titles=titles)
     fig.update_layout(title={"text":"<b>Overlap on S² — Cauchy-around-μx (projected), B rotated about Z</b>","x":0.5,"xanchor":"center"},
                       title_font_size=20, height=1100, scene=dict(aspectmode="data"),
-                      margin=dict(l=10,r=10,t=60,b=10),
-                      legend=dict(orientation="h", yanchor="bottom", y=-0.05, xanchor="center", x=0.5))
-    # sphere + points
-    u=np.linspace(0,2*np.pi,60); v=np.linspace(0,np.pi,30); uu,vv=np.meshgrid(u,v); xs=np.cos(uu)*np.sin(vv); ys=np.sin(uu)*np.sin(vv); zs=np.cos(vv)
-    idxA=np.random.choice(A.shape[0], size=min(800,A.shape[0]), replace=False)
-    idxB=np.random.choice(B0.shape[0], size=min(800,B0.shape[0]), replace=False)
-    A_sub=A[idxA]; B0_sub=B0[idxB]; B_init=(B0_sub@rotate_z(math.radians(angles_deg[0])).T)
-    fig.add_trace(go.Surface(x=xs,y=ys,z=zs,opacity=0.2,showscale=False), row=1,col=1)
-    fig.add_trace(go.Scatter3d(x=A_sub[:,0],y=A_sub[:,1],z=A_sub[:,2],mode="markers",name="A",marker=dict(size=3)),row=1,col=1)
-    fig.add_trace(go.Scatter3d(x=B_init[:,0],y=B_init[:,1],z=B_init[:,2],mode="markers",name="B (rotated)",marker=dict(size=3)),row=1,col=1)
-    if args.metric_mode=="overlap":
-        fig.add_trace(go.Scatter(x=angles_deg,y=BC_vals,name="BC (KDE)",mode="lines"),row=2,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=MMD2_vals,name="MMD²",mode="lines"),row=2,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=OVL_vals,name="OVL",mode="lines"),row=2,col=3)
-        fig.add_trace(go.Scatter(x=angles_deg,y=ang_means,name="Angle(means)",mode="lines"),row=3,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=cos_means,name="Cosine(means)",mode="lines"),row=3,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=np.maximum(Haus_AtoB,Haus_BtoA),name="Hausdorff (sym)",mode="lines"),row=3,col=3)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Fib_Jaccard,name="Fib Jaccard",mode="lines"),row=4,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=HP_Jaccard,name="HEALPix Jaccard",mode="lines"),row=4,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Chord_sym,name="Chord overlap",mode="lines"),row=4,col=3)
-        y1=(min(BC_vals),max(BC_vals)); y2=(min(MMD2_vals),max(MMD2_vals)); y3=(0,1)
-        y4=(min(ang_means),max(ang_means)); y5=(-1,1); y6=(min(np.maximum(Haus_AtoB,Haus_BtoA)),max(np.maximum(Haus_AtoB,Haus_BtoA)))
-        y7=(0,1); y8=(0,1); y9=(0,1)
-    else:
-        fig.add_trace(go.Scatter(x=angles_deg,y=KL_AtoB,name="KL(A||B)",mode="lines"),row=2,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=KL_BtoA,name="KL(B||A)",mode="lines"),row=2,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Cov_A_given_B,name="Cov(A|B)",mode="lines"),row=2,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Cov_B_given_A,name="Cov(B|A)",mode="lines"),row=2,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Haus_AtoB,name="Haus A→B (deg)",mode="lines"),row=2,col=3)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Haus_BtoA,name="Haus B→A (deg)",mode="lines"),row=2,col=3)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Fib_rec_AtoB,name="Fib recall A→B",mode="lines"),row=3,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Fib_rec_BtoA,name="Fib recall B→A",mode="lines"),row=3,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=HP_rec_AtoB,name="HP recall A→B",mode="lines"),row=3,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=HP_rec_BtoA,name="HP recall B→A",mode="lines"),row=3,col=2)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Chord_AtoB,name="Chord merge A→B",mode="lines"),row=3,col=3)
-        fig.add_trace(go.Scatter(x=angles_deg,y=Chord_BtoA,name="Chord merge B→A",mode="lines"),row=3,col=3)
-        fig.add_trace(go.Scatter(x=angles_deg,y=ang_means,name="Angle(means)",mode="lines"),row=4,col=1)
-        fig.add_trace(go.Scatter(x=angles_deg,y=cos_means,name="Cosine(means)",mode="lines"),row=4,col=2)
-        y1=(min(KL_AtoB+KL_BtoA),max(KL_AtoB+KL_BtoA)); y2=(0,1); y3=(min(Haus_AtoB+Haus_BtoA),max(Haus_AtoB+Haus_BtoA))
-        y4=(0,1); y5=(0,1); y6=(0,1); y7=(min(ang_means),max(ang_means)); y8=(-1,1)
+                      margin=dict(l=10,r=10,t=60,b=10), showlegend=False)
 
-    def vline(x0,y): 
-        import plotly.graph_objects as go
-        return go.Scatter(x=[x0,x0], y=list(y), mode="lines", showlegend=False, line=dict(dash="dash"))
-    initial=angles_deg[0]
-    if args.metric_mode=="overlap":
-        fig.add_trace(vline(initial,y1),row=2,col=1); fig.add_trace(vline(initial,y2),row=2,col=2); fig.add_trace(vline(initial,y3),row=2,col=3)
-        fig.add_trace(vline(initial,y4),row=3,col=1); fig.add_trace(vline(initial,y5),row=3,col=2); fig.add_trace(vline(initial,y6),row=3,col=3)
-        fig.add_trace(vline(initial,y7),row=4,col=1); fig.add_trace(vline(initial,y8),row=4,col=2); fig.add_trace(vline(initial,y9),row=4,col=3)
-    else:
-        fig.add_trace(vline(initial,y1),row=2,col=1); fig.add_trace(vline(initial,y2),row=2,col=2); fig.add_trace(vline(initial,y3),row=2,col=3)
-        fig.add_trace(vline(initial,y4),row=3,col=1); fig.add_trace(vline(initial,y5),row=3,col=2); fig.add_trace(vline(initial,y6),row=3,col=3)
-        fig.add_trace(vline(initial,y7),row=4,col=1); fig.add_trace(vline(initial,y8),row=4,col=2)
+    fig.add_trace(go.Surface(x=xs,y=ys,z=zs,opacity=0.2,showscale=False), row=1, col=1)
+    fig.add_trace(go.Scatter3d(x=A_sub[:,0], y=A_sub[:,1], z=A_sub[:,2], mode="markers", name="A",
+                               marker=dict(size=args.marker_size, color=args.color_A), showlegend=False), row=1, col=1)
+    fig.add_trace(go.Scatter3d(x=B_init[:,0], y=B_init[:,1], z=B_init[:,2], mode="markers", name="B",
+                               marker=dict(size=args.marker_size, color=args.color_B), showlegend=False), row=1, col=1)
 
-    # frames
+    if args.metric_mode=="overlap":
+        c1, c2, c3 = "#6C7A89", "#34495E", "#95A5A6"
+        fig.add_trace(go.Scatter(x=angles_deg, y=BC_vals, mode="lines", line=dict(color=c1), showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=MMD2_vals, mode="lines", line=dict(color=c2), showlegend=False), row=2, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=OVL_vals, mode="lines", line=dict(color=c3), showlegend=False), row=2, col=3)
+        fig.add_trace(go.Scatter(x=angles_deg, y=ang_means, mode="lines", line=dict(color=c1), showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=cos_means, mode="lines", line=dict(color=c2), showlegend=False), row=3, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=np.maximum(Haus_AtoB, Haus_BtoA), mode="lines", line=dict(color=c3), showlegend=False), row=3, col=3)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Fib_Jaccard, mode="lines", line=dict(color=c1), showlegend=False), row=4, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=HP_Jaccard, mode="lines", line=dict(color=c2), showlegend=False), row=4, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Chord_sym, mode="lines", line=dict(color=c3), showlegend=False), row=4, col=3)
+        y_ranges=[(min(BC_vals),max(BC_vals)),(min(MMD2_vals),max(MMD2_vals)),(0,1),
+                  (min(ang_means),max(ang_means)),(-1,1),(min(np.maximum(Haus_AtoB,Haus_BtoA)),max(np.maximum(Haus_AtoB,Haus_BtoA))),
+                  (0,1),(0,1),(0,1)]
+        v_coords=[(2,1),(2,2),(2,3),(3,1),(3,2),(3,3),(4,1),(4,2),(4,3)]
+    else:
+        fig.add_trace(go.Scatter(x=angles_deg, y=KL_AtoB_vals, mode="lines", line=dict(color=args.color_A), showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=KL_BtoA_vals, mode="lines", line=dict(color=args.color_B), showlegend=False), row=2, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Cov_A_given_B, mode="lines", line=dict(color=args.color_A), showlegend=False), row=2, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Cov_B_given_A, mode="lines", line=dict(color=args.color_B), showlegend=False), row=2, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Haus_AtoB, mode="lines", line=dict(color=args.color_A), showlegend=False), row=2, col=3)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Haus_BtoA, mode="lines", line=dict(color=args.color_B), showlegend=False), row=2, col=3)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Fib_rec_AtoB, mode="lines", line=dict(color=args.color_A), showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Fib_rec_BtoA, mode="lines", line=dict(color=args.color_B), showlegend=False), row=3, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=HP_rec_AtoB, mode="lines", line=dict(color=args.color_A), showlegend=False), row=3, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=HP_rec_BtoA, mode="lines", line=dict(color=args.color_B), showlegend=False), row=3, col=2)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Chord_AtoB, mode="lines", line=dict(color=args.color_A), showlegend=False), row=3, col=3)
+        fig.add_trace(go.Scatter(x=angles_deg, y=Chord_BtoA, mode="lines", line=dict(color=args.color_B), showlegend=False), row=3, col=3)
+        fig.add_trace(go.Scatter(x=angles_deg, y=ang_means, mode="lines", line=dict(color="#7F8C8D"), showlegend=False), row=4, col=1)
+        fig.add_trace(go.Scatter(x=angles_deg, y=cos_means, mode="lines", line=dict(color="#7F8C8D"), showlegend=False), row=4, col=2)
+        y_ranges=[(min(KL_AtoB_vals+KL_BtoA_vals),max(KL_AtoB_vals+KL_BtoA_vals)),(0,1),(min(Haus_AtoB+Haus_BtoA),max(Haus_AtoB+Haus_BtoA)),
+                  (0,1),(0,1),(0,1),(min(ang_means),max(ang_means)),(-1,1)]
+        v_coords=[(2,1),(2,2),(2,3),(3,1),(3,2),(3,3),(4,1),(4,2)]
+
+    vline_indices=[]
+    for (row,col),yr in zip(v_coords,y_ranges):
+        tr = go.Scatter(x=[angles_deg[0], angles_deg[0]], y=list(yr), mode="lines",
+                        line=dict(dash="dash", width=1), showlegend=False)
+        fig.add_trace(tr, row=row, col=col); vline_indices.append(len(fig.data)-1)
+
+    # Frames updating B scatter + vlines only
     frames=[]
     for ang in angles_deg:
         B_sub=(B0_sub@rotate_z(math.radians(ang)).T)
-        updates=[go.Surface(), go.Scatter3d(), go.Scatter3d(x=B_sub[:,0], y=B_sub[:,1], z=B_sub[:,2])]
-        # pad for metric lines
-        tcount=9 if args.metric_mode=="overlap" else 12  # number of line traces (approx) before vlines
-        updates.extend([go.Scatter() for _ in range(tcount)])
-        # vlines
-        vlines=[go.Scatter(x=[ang,ang], y=list(y)) for y in ([y1,y2,y3,y4,y5,y6,y7,y8,y9] if args.metric_mode=="overlap" else [y1,y2,y3,y4,y5,y6,y7,y8])]
-        updates.extend(vlines)
-        frames.append(go.Frame(name=str(ang), data=updates))
+        updates=[go.Scatter3d(x=B_sub[:,0], y=B_sub[:,1], z=B_sub[:,2])]
+        updates += [go.Scatter(x=[ang,ang], y=list(yr)) for yr in y_ranges]
+        frames.append(go.Frame(name=str(ang), data=updates, traces=[2]+vline_indices))
     fig.frames=frames
 
-    steps=[]; 
-    for ang in angles_deg:
-        steps.append(dict(method="animate", args=[[str(ang)],{"mode":"immediate","frame":{"duration":0,"redraw":True},"transition":{"duration":0}}], label=f"{ang}°"))
-    sliders=[dict(active=0,currentvalue={"prefix":"Rotation φ = "}, pad={"t":30}, steps=steps)]
+    steps=[dict(method="animate", args=[[str(ang)],{"mode":"immediate","frame":{"duration":0,"redraw":True},"transition":{"duration":0}}], label=f"{ang}°") for ang in angles_deg]
+    sliders=[dict(active=0, currentvalue={"prefix":"Rotation φ = "}, pad={"t":30}, steps=steps)]
     fig.update_layout(sliders=sliders)
 
+    out_html=args.out_html if args.out_html else ("s2_merge_plotly.html" if args.metric_mode=="merge" else "s2_overlap_plotly.html")
     from plotly.offline import plot as plotly_save
-    plotly_save(fig, filename=args.out_html, auto_open=False)
-    print("Wrote:", args.out_html); print("Wrote:", args.out_csv)
+    plotly_save(fig, filename=out_html, auto_open=False)
+    print("Wrote:", out_html); print("Wrote:", args.out_csv)
 
 if __name__=="__main__":
     main()
