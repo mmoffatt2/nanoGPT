@@ -63,6 +63,14 @@ def parse_args() -> argparse.Namespace:
         '--use_timestamp', action='store_true',
         help="Prepend timestamp to run names and out_dir."
     )
+    parser.add_argument(
+        '--include_common_group_in_name', action='store_true',
+        help=(
+            "Include parameters defined in `common_group` when building run "
+            "names, output directories, and CSV filenames. By default these "
+            "common parameters are omitted to keep names short."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -116,11 +124,50 @@ def _substitute_run_name(obj, run_name: str):
     return obj
 
 
+def _extract_common_group(cfg: dict) -> tuple[dict, set[str]]:
+    """Extract shared parameters defined under ``common_group``.
+
+    Returns a tuple of (common_values, common_keys). The ``cfg`` mapping is
+    mutated in-place to remove the ``common_group`` entry so it is not processed
+    again during combination generation.
+    """
+
+    raw_common = cfg.pop('common_group', None)
+    if raw_common is None:
+        return {}, set()
+
+    if not isinstance(raw_common, dict):
+        raise TypeError("'common_group' must be a mapping of parameter names to values")
+
+    common: dict[str, object] = {}
+    for key, value in raw_common.items():
+        normalized = expand_range(value)
+        if isinstance(normalized, list):
+            if len(normalized) != 1:
+                raise ValueError(
+                    "Values in 'common_group' must resolve to a single option; "
+                    f"got {len(normalized)} options for '{key}'"
+                )
+            normalized = normalized[0]
+        if isinstance(normalized, dict):
+            raise ValueError(
+                "Values in 'common_group' cannot contain nested option structures"
+            )
+        common[key] = normalized
+
+    return common, set(common)
+
+
 def generate_combinations(config: dict):
     """Yield all valid parameter combinations for a config dict.
 
-    Supports arbitrarily nested ``parameter_groups``.
+    Supports arbitrarily nested ``parameter_groups`` and the optional
+    ``common_group`` block.
     """
+
+    cfg = dict(config)
+    common_values, common_keys = _extract_common_group(cfg)
+
     def _expand_base_and_conditionals(cfg: dict):
         # Split plain parameters (base) from conditional specs
         base = {
@@ -188,17 +235,35 @@ def generate_combinations(config: dict):
             for final in _apply_conditionals(combo_dict, conditionals):
                 yield final
 
-    # Work on a shallow copy to avoid mutating caller's dict
-    yield from recurse(dict(config))
+    for combo in recurse(cfg):
+        merged = dict(common_values)
+        for key, value in combo.items():
+            if key in merged and merged[key] != value:
+                raise ValueError(
+                    "Parameters defined in 'common_group' must not be overridden elsewhere"
+                )
+            merged[key] = value
+        yield merged, common_keys
 
 
-def format_run_name(combo: dict, base: str, prefix: str) -> str:
-    """
-    Create a unique run name from parameter values.
-    """
-    parts = [str(v) for v in combo.values()
-             if not (isinstance(v, str) and RUN_NAME_VAR in v)]
-    return f"{prefix}{base}-{'-'.join(parts)}"
+def format_run_name(
+    combo: dict,
+    base: str,
+    prefix: str,
+    exclude_keys: set[str] | None = None,
+) -> str:
+    """Create a unique run name from parameter values."""
+
+    exclude_keys = exclude_keys or set()
+    parts = [
+        str(v)
+        for k, v in combo.items()
+        if k not in exclude_keys
+        and not (isinstance(v, str) and RUN_NAME_VAR in v)
+    ]
+
+    base_name = f"{prefix}{base}"
+    return f"{base_name}-{'-'.join(parts)}" if parts else base_name
 
 
 def read_metrics(out_dir: str) -> dict:
@@ -267,12 +332,14 @@ def build_command(combo: dict) -> list[str]:
 def run_experiment(
     combo: dict,
     base: str,
-    args: argparse.Namespace
+    args: argparse.Namespace,
+    common_keys: set[str],
 ) -> None:
     """
     Execute one experiment combo: skip if done, run train.py, record metrics.
     """
-    run_name = format_run_name(combo, base, args.prefix)
+    exclude = set() if args.include_common_group_in_name else common_keys
+    run_name = format_run_name(combo, base, args.prefix, exclude)
     log_file = LOG_DIR / f"{base}.yaml"
     if run_name in completed_runs(log_file):
         print(f"[yellow]Skipping already-run:[/] {run_name}")
@@ -319,14 +386,14 @@ def main():
     configs = load_configurations(args.config, args.config_format)
 
     # Precompute all combinations to know total experiment count
-    all_combos = []
+    all_combos: list[tuple[dict, set[str]]] = []
     for cfg in configs:
         all_combos.extend(list(generate_combinations(cfg)))
 
     total = len(all_combos)
     start_time = datetime.now()
     progress_log = LOG_DIR / f"{base}_progress.log"
-    for idx, combo in enumerate(all_combos, 1):
+    for idx, (combo, common_keys) in enumerate(all_combos, 1):
         configs_left = total - idx + 1
         if idx == 1:
             message = (
@@ -352,7 +419,7 @@ def main():
             )
             print(f"[green]{message}[/]")
             append_progress(progress_log, message)
-        run_experiment(combo, base, args)
+        run_experiment(combo, base, args, common_keys)
 
 
 if __name__ == '__main__':

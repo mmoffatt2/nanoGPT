@@ -7,6 +7,11 @@ parameter_groups:
   - use_rotary_embeddings: [false]
     use_abs_pos_embeddings: [true]
 
+# common_group: parameters applied to every run but omitted from run names
+common_group:
+  learning_rate: [0.0003]
+  weight_decay: [0.1]
+
 # base hyperparameters
 max_iters: [250]
 n_layer: [6]
