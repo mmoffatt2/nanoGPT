@@ -1,10 +1,31 @@
 # sample.yaml demonstrating named parameter group configurations
 ---
 
+# Atomic Static Groupings
 named_static_groups:
+  # QK Norm
+  - named_group: "no_qk_norm"
+    use_qk_norm: [false]
+    use_qk_norm_scale: [false]
   - named_group: "qk_norm"
     use_qk_norm: [true]
     use_qk_norm_scale: [true]
+
+  # Norm Type
+  - named_group: "pre_ln"
+    use_pre_ln: [true]
+    use_peri_ln: [false]
+    use_post_ln: [false]
+  - named_group: "peri_ln"
+    use_pre_ln: [true]
+    use_peri_ln: [true]
+    use_post_ln: [false]
+  - named_group: "post_ln"
+    use_pre_ln: [true]
+    use_peri_ln: [false]
+    use_post_ln: [true]
+
+  # Position Embeddings
   - named_group: "rotary"
     named_group_settings:
       use_rotary_embeddings: [true]
@@ -13,6 +34,8 @@ named_static_groups:
     named_group_settings:
       use_rotary_embeddings: [false]
       use_abs_pos_embeddings: [true]
+
+  # RMSNorm Variations
   - named_group: "rmsnorm_all"
     named_group_settings:
       norm_variant_attn: ["rmsnorm"]
@@ -21,59 +44,41 @@ named_static_groups:
     named_group_settings:
       norm_variant_attn: ["rmsnorm"]
       norm_variant_output: ["hyperspherenorm"]
-  - named_group: "speed_optimal"
-    named_group_settings:
-      compile: [true]
-      use_gradient_checkpointing: [false]
-  - named_group: "memory_optimal"
-    named_group_settings:
-      compile: [false]
-      use_gradient_checkpointing: [true]
-  - named_group: "shared_training_defaults"
-    named_group_settings:
-      dropout: [0.0]
-      gradient_accumulation_steps: [1]
 
+# Higher Level Groupings
 named_variation_groups:
-  - named_group: "layer_batch_variations"
-    named_group_settings:
-      block_size: [256]
-    parameter_groups:
-      - n_layer: [2, 3]
-        batch_size: [32]
-      - n_layer: [4]
-        batch_size: [64]
   - named_group: "embedding_head_variations"
     parameter_groups:
       - n_embd: 256
-        n_head: 4
+        n_head: [4, 8]
       - n_embd: 320
-        n_head: 5
+        n_head: [5, 4]
   - named_group: "positional_embeddings"
     named_group_alternates: ["rotary", "abs"]
-  - named_group: "memory_vs_speed"
-    named_group_alternates: ["speed_optimal", "memory_optimal"]
 
-# parameter_groups: define sets of overrides to apply on top of base params
-parameter_groups:
-  - use_post_ln: [true, false]
-    named_group_static: ["qk_norm", "shared_training_defaults"]
-    named_group_variations:
-      - "layer_batch_variations"
-      - "embedding_head_variations"
-      - "positional_embeddings"
-      - "memory_vs_speed"
-    named_group_alternates: ["rmsnorm_all", "rmsnorm_attn_hsnorm_out"]
-
-# common_group: parameters applied to every run but omitted from run names
+# Common_group: parameters applied to every run, but omitted from run names
 common_group:
   dataset: ["shakespeare_char"]
+  n_layer: ["2"]
+  block_size: ["32"]
+  batch_size: ["8"]
   max_iters: [750]
-  learning_rate: [0.0003]
-  weight_decay: [0.1]
+  device: ["cuda"]
+  dtype: ["bfloat16"]
+  never_save_checkpoint: [true]
 
-# base hyperparameters
-device: ["cpu"]
-dtype: ["float32"]
-tensorboard_run_name: ["named_group_demo"]
+# Parameter_groups: define sets of overrides to apply on top of base params
+parameter_groups:
+  - compile: [true, false]
+    named_group_static: ["qk_norm", "pre_ln"]
+    named_group_variations:
+      - "embedding_head_variations"
+      - "positional_embeddings"
+    named_group_alternates: ["rmsnorm_all", "rmsnorm_attn_hsnorm_out"]
+  - compile: [true, false]
+    named_group_static: ["no_qk_norm", "peri_ln"]
+    named_group_variations:
+      - "embedding_head_variations"
+      - "positional_embeddings"
+    named_group_alternates: ["rmsnorm_all", "rmsnorm_attn_hsnorm_out"]
 
