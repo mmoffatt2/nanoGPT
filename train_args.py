@@ -637,6 +637,7 @@ def parse_args():
 
     model_group.add_argument("--norm_variant_attn", type=str, default="rmsnorm", choices=norm_variations)
     model_group.add_argument("--norm_variant_output", type=str, default="rmsnorm", choices=norm_variations)
+    model_group.add_argument("--use_flash_norm", type=bool, default=None, action=argparse.BooleanOptionalAction)
 
     ### WTE and Abs Pos Embedding Post Norms (optional, and default None)
     model_group.add_argument("--norm_variant_wte", type=str, default=None, choices=norm_variations)
