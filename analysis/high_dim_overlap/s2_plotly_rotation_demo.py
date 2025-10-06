@@ -243,8 +243,6 @@ def main():
         if "bc" in selected:
             qB_eval=kde_density_at(B, X_eval, beta, Zb); store.setdefault("bc", []).append(float(np.mean(np.sqrt(pA_eval*qB_eval))))
         if "mmd" in selected:
-            if "kAB" not in store:
-                pass
             kAB=np.mean(np.exp(beta*AB)); store.setdefault("mmd2", []).append(float((kAA+kBB-2*kAB)/Zb))
         if "kl" in selected:
             store.setdefault("kl_AtoB", []).append(kde_kl_directional(A,B,beta,Zb))
