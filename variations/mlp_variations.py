@@ -625,7 +625,7 @@ class DualPathSwiglu(nn.Module):
         if self.quantization_mlp_dict["quantize_mlp_act_activation_input"]:
             num_bits = self.quantization_mlp_dict["quantize_mlp_act_activation_input_bits"]
             quant_method = self.quantization_mlp_dict["activations_quant_method"]
-            x = fake_quantize_act(self, "mlp_act_activation_input", x, num_bits, quant_method, iter_num)
+            x_out = fake_quantize_act(self, "mlp_act_activation_input", x_out, num_bits, quant_method, iter_num)
 
         # First activation path - shifted right
         x1 = self.activation_variant(x_out - self.activation_x_offset) - self.activation_y_offset
