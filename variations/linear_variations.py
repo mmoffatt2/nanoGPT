@@ -412,7 +412,7 @@ def wrap_with_flashnorm(linear_cls, config):
         return linear_cls
     
     class FlashNormWrapper(nn.Module):
-        def __init__(self, in_features, out_features, config=None, **kwargs):
+        def __init__(self, in_features, out_features, config=None, method=None, bits=None, bias=True, **kwargs):
             super().__init__()
             self.in_features = in_features
             self.out_features = out_features
@@ -421,7 +421,7 @@ def wrap_with_flashnorm(linear_cls, config):
             self.gain = nn.Parameter(torch.ones(in_features))
             
             # Instantiate the base linear (QuantizedLinear, BitLinear, etc.)
-            self.linear = linear_cls(in_features, out_features, config, **kwargs)
+            self.linear = linear_cls(in_features, out_features, config=config, method=method, bits=bits, bias=bias, **kwargs)
             
             # Fuse gain into weights
             self._fuse_gain_into_weights()
