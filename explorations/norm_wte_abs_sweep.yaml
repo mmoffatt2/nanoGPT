@@ -38,7 +38,7 @@ parameter_groups:
   - norm_variant_wte: ["hyperspherenorm"]
     norm_wte_radius: ["20.0"]
     norm_wte_scale: ["1.0", "2.0", "5.0"]
-    norm_wte_gain: [false]
+    norm_wte_gain: [true]
     use_abs_pos_embeddings: [true]
     tensorboard_run_name: ["wte_l2_default_w_scale_and_gain"]
   - norm_variant_abs: ["hyperspherenorm"]
