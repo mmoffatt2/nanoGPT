@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from variations.activation_variations import activation_dictionary
-from variations.linear_variations import linear_dictionary
+from variations.linear_variations import linear_dictionary, wrap_with_flashnorm
 from quantization.quantize import fake_quantize_act
 from quantization.quant_utils import set_variant, create_activation_buffers
 
@@ -186,7 +186,7 @@ class EdgeLLMASICMLP(nn.Module):
             self.register_buffer("activation_y_offset", torch.tensor(config.mlp_y_offset))
 
         # Sets the class of linear for MLP
-        self.linear_variant_mlp_up = linear_dictionary[set_variant(config.linear_variant_mlp_up, config.linear_variant_mlp)]
+        self.linear_variant_mlp_up = wrap_with_flashnorm(linear_dictionary[set_variant(config.linear_variant_mlp_up, config.linear_variant_mlp)], config)
         self.linear_variant_mlp_down = linear_dictionary[set_variant(config.linear_variant_mlp_down, config.linear_variant_mlp)]
 
         self.quantization_mlp_dict = {}

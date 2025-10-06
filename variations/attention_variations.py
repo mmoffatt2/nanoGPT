@@ -8,7 +8,7 @@ from torch.nn import functional as F
 
 from quantization.quant_utils import create_activation_buffers, set_variant
 from quantization.quantize import fake_quantize_act
-from variations.linear_variations import linear_dictionary
+from variations.linear_variations import linear_dictionary, wrap_with_flashnorm
 from variations.position_encoding_variations import (
     FIRE, RotaryEmbedding, SymmetricalOverlapAngularPositions)
 from variations.softmax_variations import softmax_dictionary
@@ -456,9 +456,9 @@ class EdgeLLMASICAttention(nn.Module):
             elif arg.startswith("quantize_") and "linear_attn" in arg and arg.endswith("_method"):
                 self.quantization_attn_dict[arg] = set_variant(val, config.quantize_linear_method)
 
-        self.linear_variant_q = linear_dictionary[set_variant(config.linear_variant_q, config.linear_variant_attn)]
-        self.linear_variant_k = linear_dictionary[set_variant(config.linear_variant_k, config.linear_variant_attn)]
-        self.linear_variant_v = linear_dictionary[set_variant(config.linear_variant_v, config.linear_variant_attn)]
+        self.linear_variant_q = wrap_with_flashnorm(linear_dictionary[set_variant(config.linear_variant_q, config.linear_variant_attn)], config)
+        self.linear_variant_k = wrap_with_flashnorm(linear_dictionary[set_variant(config.linear_variant_k, config.linear_variant_attn)], config)
+        self.linear_variant_v = wrap_with_flashnorm(linear_dictionary[set_variant(config.linear_variant_v, config.linear_variant_attn)], config)
         self.linear_variant_attn_proj = linear_dictionary[set_variant(config.linear_variant_attn_proj, config.linear_variant_attn)]
 
         # key, query, value projections for all heads, but in a batch

@@ -366,6 +366,7 @@ class GPTConfig:
     # Layernorm Alternatives and Options
     norm_variant_attn: str = "rmsnorm"
     norm_variant_output: str = "rmsnorm"
+    use_flash_norm: bool = False
 
     norm_variant_wte: str | None = None
     norm_wte_radius: float | None = None

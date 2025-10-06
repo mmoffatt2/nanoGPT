@@ -30,7 +30,8 @@ python3 train.py \
     --no-bias \
     --dtype bfloat16 \
     --quantization_warmup_iters 0 \
-    --use_pre_ln \
+    --no-use_pre_ln \
+    --use_flash_norm \
     --quantize_attn_act \
     --quantize_mlp_act \
     --quantize_asic_prenorm \
