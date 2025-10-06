@@ -720,7 +720,7 @@ class GPT(nn.Module):
             pos = torch.arange(0, t, dtype=torch.long, device=device)
             tok_emb = tok_emb + self.transformer.wpe(pos)
             if self.config.norm_variant_abs is not None:
-                tok_emb = self.transformer.post_abs_norm(x)
+                tok_emb = self.transformer.post_abs_norm(tok_emb)
 
 
         return self.transformer.drop(tok_emb)
