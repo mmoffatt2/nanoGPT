@@ -525,6 +525,7 @@ def parse_args():
             "kan",
             "swiglu",
             "dual_path",
+            "dual_path_swiglu",
             "identity",
             ]
     
@@ -677,6 +678,7 @@ def parse_args():
             "softsign",
             "softshrink",
             "squared_relu",
+            "squared_gelu",
             "tanh",
             "identity",
         ]
