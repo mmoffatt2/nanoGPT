@@ -637,6 +637,18 @@ def parse_args():
     model_group.add_argument("--norm_variant_attn", type=str, default="rmsnorm", choices=norm_variations)
     model_group.add_argument("--norm_variant_output", type=str, default="rmsnorm", choices=norm_variations)
 
+    ### WTE and Abs Pos Embedding Post Norms (optional, and default None)
+    model_group.add_argument("--norm_variant_wte", type=str, default=None, choices=norm_variations)
+    model_group.add_argument("--norm_variant_abs", type=str, default=None, choices=norm_variations)
+
+    model_group.add_argument("--norm_wte_radius", type=float, default=None)
+    model_group.add_argument("--norm_wte_scale", type=float, default=None)
+    model_group.add_argument("--norm_wte_gain", type=bool, default=None, action=argparse.BooleanOptionalAction)
+
+    model_group.add_argument("--norm_abs_radius", type=float, default=None)
+    model_group.add_argument("--norm_abs_scale", type=float, default=None)
+    model_group.add_argument("--norm_abs_gain", type=bool, default=None, action=argparse.BooleanOptionalAction)
+
     ## Layernorm
     model_group.add_argument('--bias', default=False, action=argparse.BooleanOptionalAction, help="only used for layernorm variation option")
 
@@ -652,6 +664,7 @@ def parse_args():
 
     ## HyperSphereNorm
     model_group.add_argument("--hsnorm_gain", default=False, action=argparse.BooleanOptionalAction)
+    model_group.add_argument("--hsnorm_scale", type=float, default=1.0)
     model_group.add_argument("--hsnorm_radius", type=float, default=None)
     model_group.add_argument("--hsnorm_radius_learning", default=False, action=argparse.BooleanOptionalAction)
 
@@ -691,6 +704,7 @@ def parse_args():
     model_group.add_argument("--dact_use_alpha",  type=bool, default=True, action=argparse.BooleanOptionalAction)
 
     model_group.add_argument("--use_embedding_scale", type=bool, default=False, action=argparse.BooleanOptionalAction)
+    model_group.add_argument("--embedding_scale_init", type=float, default=None)
 
     # ACTIVATION VARIATIONS
     model_group.add_argument( "--activation_variant", type=str, default="gelu", choices=activation_variations)
